@@ -1,0 +1,166 @@
+# Shared bats helpers for the multi-cli session-continuation suite.
+#
+# Every test runs the REAL multi-cli launcher against REAL fixture trees built
+# in mktemp scratch dirs. No mocks. HOME and MULTICLI_HOME are always redirected
+# into scratch so the operator's real ~/.codex / ~/.claude are never touched.
+
+# Absolute path to the repo root (parent of tests/).
+MULTICLI_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+MULTICLI_BIN="$MULTICLI_REPO_ROOT/multi-cli"
+MULTICLI_VENDOR="$MULTICLI_REPO_ROOT/tests/vendor"
+
+# The pinned jq release used when bootstrapping a vendored binary on demand.
+MULTICLI_JQ_VERSION="jq-1.7.1"
+MULTICLI_JQ_BASE_URL="https://github.com/jqlang/jq/releases/download/$MULTICLI_JQ_VERSION"
+
+# Name of the jq release asset for the current OS/arch, and the local filename
+# it should be saved as in tests/vendor.
+_multicli_jq_asset() {
+  local os arch
+  os="$(uname -s 2>/dev/null || echo unknown)"
+  arch="$(uname -m 2>/dev/null || echo unknown)"
+  case "$os" in
+    Linux)
+      case "$arch" in
+        x86_64|amd64) echo "jq-linux-amd64 jq" ;;
+        aarch64|arm64) echo "jq-linux-arm64 jq" ;;
+        *) return 1 ;;
+      esac ;;
+    Darwin)
+      case "$arch" in
+        arm64) echo "jq-macos-arm64 jq" ;;
+        x86_64) echo "jq-macos-amd64 jq" ;;
+        *) return 1 ;;
+      esac ;;
+    MINGW*|MSYS*|CYGWIN*|Windows*)
+      echo "jq-windows-amd64.exe jq.exe" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Download the pinned jq binary into tests/vendor when neither a system jq nor a
+# vendored binary exists. Keeps the suite single-command on a fresh machine.
+_multicli_bootstrap_jq() {
+  local asset local_name url dest
+  read -r asset local_name <<<"$(_multicli_jq_asset)" || {
+    echo "jq bootstrap: unsupported OS/arch ($(uname -s)/$(uname -m))" >&2
+    return 1
+  }
+  url="$MULTICLI_JQ_BASE_URL/$asset"
+  dest="$MULTICLI_VENDOR/$local_name"
+  mkdir -p "$MULTICLI_VENDOR"
+  echo "Fetching $MULTICLI_JQ_VERSION ($asset) into $dest ..." >&2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$dest" || { echo "jq download failed: $url" >&2; return 1; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$dest" "$url" || { echo "jq download failed: $url" >&2; return 1; }
+  else
+    echo "jq bootstrap: neither curl nor wget available" >&2
+    return 1
+  fi
+  chmod +x "$dest"
+}
+
+# Locate jq: prefer one already on PATH, otherwise the vendored static binary,
+# downloading the vendored binary on demand. The launcher hard-requires jq;
+# git-bash and minimal CI images often lack it, so we prepend vendor/.
+ensure_jq_on_path() {
+  if command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -x "$MULTICLI_VENDOR/jq.exe" ] || [ -x "$MULTICLI_VENDOR/jq" ]; then
+    PATH="$MULTICLI_VENDOR:$PATH"
+    export PATH
+    return 0
+  fi
+  _multicli_bootstrap_jq || {
+    echo "jq not found and bootstrap into $MULTICLI_VENDOR failed" >&2
+    return 1
+  }
+  PATH="$MULTICLI_VENDOR:$PATH"
+  export PATH
+  command -v jq >/dev/null 2>&1
+}
+
+# Build an isolated environment for one test. Creates scratch HOME + profile
+# root and exports them. The tool's 'base' (e.g. ~/.codex) therefore resolves
+# under the scratch HOME, never the operator's real home.
+setup_scratch() {
+  ensure_jq_on_path
+  MULTICLI_SCRATCH="$(mktemp -d "${BATS_TMPDIR:-/tmp}/multicli.XXXXXX")"
+  export HOME="$MULTICLI_SCRATCH/home"
+  export MULTICLI_HOME="$MULTICLI_SCRATCH/profiles"
+  mkdir -p "$HOME" "$MULTICLI_HOME"
+  CODEX_BASE="$HOME/.codex"
+}
+
+teardown_scratch() {
+  [ -n "${MULTICLI_SCRATCH:-}" ] && rm -rf "$MULTICLI_SCRATCH"
+}
+
+# Run the real launcher. Use with bats `run` to capture status/output.
+multicli() {
+  "$MULTICLI_BIN" "$@"
+}
+
+# --- Fixture builders (real files, real content) ---------------------------
+
+# A genuine Codex rollout file: first line is a real session_meta record,
+# followed by message records, mirroring the on-disk format codex writes.
+write_rollout() {
+  local dir="$1" session_id="$2"
+  mkdir -p "$dir"
+  local f="$dir/rollout-2026-06-11T10-00-00-$session_id.jsonl"
+  {
+    printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$session_id\",\"timestamp\":\"2026-06-11T10:00:00Z\",\"cwd\":\"/work\",\"originator\":\"codex_cli_rs\"}}"
+    printf '%s\n' '{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"fix the build"}]}}'
+    printf '%s\n' '{"type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":"done"}]}}'
+  } > "$f"
+  printf '%s\n' "$f"
+}
+
+write_history() {
+  local base_dir="$1"
+  mkdir -p "$base_dir"
+  printf '%s\n' '{"session":"abc-123","ts":1717495200,"text":"fix the build"}' > "$base_dir/history.jsonl"
+}
+
+# A real (fake-secret) auth.json credential file.
+write_auth() {
+  local base_dir="$1"
+  mkdir -p "$base_dir"
+  printf '%s\n' '{"OPENAI_API_KEY":"sk-test-DO-NOT-COPY","tokens":{"id_token":"x"}}' > "$base_dir/auth.json"
+}
+
+# A nested decoy credential hidden inside sessions/ -- must never be copied.
+write_decoy_credential() {
+  local sessions_dir="$1"
+  mkdir -p "$sessions_dir"
+  printf '%s\n' '{"OPENAI_API_KEY":"sk-decoy-MUST-NOT-LEAK"}' > "$sessions_dir/auth.json"
+}
+
+write_config() {
+  local base_dir="$1"
+  mkdir -p "$base_dir"
+  printf '%s\n' 'model = "gpt-5"' > "$base_dir/config.toml"
+}
+
+# Build a full, realistic codex base (~/.codex) inside the scratch HOME.
+seed_codex_base() {
+  local sessions_dir="$CODEX_BASE/sessions/2026/06/11"
+  write_rollout "$sessions_dir" "abc-123" >/dev/null
+  write_history "$CODEX_BASE"
+  write_auth "$CODEX_BASE"
+  write_decoy_credential "$CODEX_BASE/sessions"
+  write_config "$CODEX_BASE"
+}
+
+# Source the launcher so individual functions can be called directly. The
+# launcher runs need_jq + dispatch on load; passing 'help' makes that a no-op
+# (prints help to the redirected fd and returns without exiting non-zero).
+source_launcher() {
+  ensure_jq_on_path
+  set -- help
+  # shellcheck disable=SC1090
+  source "$MULTICLI_BIN" >/dev/null 2>&1
+}

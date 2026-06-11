@@ -32,6 +32,10 @@
     "linkable":    ["sandbox.json", "cli-config.json"],
     "neverLink":   []
   },
+  "session": {
+    "portable": false,
+    "reason":   "Chats live in sqlite state databases keyed to the workspace path and cannot be safely merged."
+  },
   "install": "https://cursor.com/download",
   "versionCommand": ["--version"],
   "status": "stable"

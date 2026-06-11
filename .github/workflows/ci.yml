@@ -111,3 +111,48 @@ jobs:
             throw "PSScriptAnalyzer reported $($findings.Count) error-severity finding(s)."
           }
           Write-Host "No error-severity findings."
+
+  # The bash session-continuation suite (bats). Runs the REAL launcher against
+  # real fixture trees on both Linux and macOS. bats-core and jq are fetched
+  # fresh by the runner (never committed): jq via the system package manager,
+  # bats-core via the system package manager when available, otherwise
+  # tests/run-bats.sh clones the pinned v1.11.0 into tests/vendor on demand.
+  bats:
+    name: bats (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats + jq
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y bats jq
+          elif command -v brew >/dev/null 2>&1; then
+            brew install bats-core jq
+          else
+            echo "no supported package manager (apt-get/brew) on this runner" >&2
+            exit 1
+          fi
+          bats --version
+          jq --version
+
+      - name: Run the bats suite
+        run: bash tests/run-bats.sh
+
+  # The PowerShell session-continuation suite (Pester). Uses the Pester 3.4
+  # shipped with Windows PowerShell 5.1 (the suite is 3.4-compatible). The
+  # PowerShell launcher parses JSON natively, so this suite needs no jq.
+  pester:
+    name: pester (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the Pester suite
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-pester.ps1

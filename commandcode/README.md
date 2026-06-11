@@ -24,6 +24,17 @@ commandcode-personal
 - **full** *(default)* — separate `auth.json`, `history.jsonl`, `projects/`, `file-history/`, `skills/`, `taste/`, `plans/`.
 - **shared** — symlinks `skills/`, `taste/`, `plans/` from `~/.commandcode/`. Auth and history stay isolated.
 
+## Continue a chat across accounts
+
+Rate-limited on one account? Copy the conversation state to a profile logged into another, then resume the same chat.
+
+```bash
+multi-cli continue commandcode work personal   # copy history/projects (never auth)
+commandcode-personal                            # resume from the same working directory
+```
+
+`base` works as either profile name and means `~/.commandcode`. Default merge keeps newer destination files; `--no-merge` overwrites, `--dry-run` previews.
+
 ## Caveats
 
 - Tools that read `~/.gitconfig`, `~/.ssh/`, etc. will work — they're symlinked through.

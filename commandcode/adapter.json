@@ -17,6 +17,12 @@
     "linkable":    ["skills", "taste", "plans"],
     "neverLink":   ["auth.json", "history.jsonl", "projects", "file-history"]
   },
+  "session": {
+    "portable":    true,
+    "paths":       ["projects", "history.jsonl", "plans"],
+    "credentials": ["auth.json"],
+    "resumeHint":  "Resume a copied conversation from the same working directory it was started in."
+  },
   "install": "npm i -g commandcode",
   "versionCommand": ["--version"],
   "status": "stable",

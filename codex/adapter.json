@@ -16,6 +16,12 @@
     "linkable":    ["config.toml", "skills", "agents", "prompts", "mcp-configs", "plugins"],
     "neverLink":   ["auth.json", "sessions", "history.jsonl"]
   },
+  "session": {
+    "portable":    true,
+    "paths":       ["sessions", "history.jsonl", "archived_sessions", "session_index.jsonl"],
+    "credentials": ["auth.json"],
+    "resumeHint":  "Resume a copied conversation with `codex resume <session-id>`."
+  },
   "install": "npm i -g @openai/codex",
   "versionCommand": ["--version"],
   "status": "stable"

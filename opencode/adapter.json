@@ -19,6 +19,10 @@
     "linkable":    ["agents", "commands", "modes", "plugins"],
     "neverLink":   ["auth.json"]
   },
+  "session": {
+    "portable": false,
+    "reason":   "Sessions and credentials share one sqlite database (opencode.db) and cannot be separated safely."
+  },
   "install": "npm i -g opencode-ai",
   "versionCommand": ["--version"],
   "status": "stable"

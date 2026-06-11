@@ -16,6 +16,12 @@
     "linkable":    ["settings.json", "skills", "GEMINI.md"],
     "neverLink":   ["oauth_creds.json", "google_accounts.json", "history"]
   },
+  "session": {
+    "portable":    true,
+    "paths":       ["tmp"],
+    "credentials": ["oauth_creds.json", "google_accounts.json"],
+    "resumeHint":  "Resume a copied conversation with `gemini --resume` or `/chat resume` inside the session."
+  },
   "install": "npm i -g @google/gemini-cli",
   "versionCommand": ["--version"],
   "status": "stable"

@@ -12,6 +12,7 @@
   USAGE
     multi-cli new <tool>/<name>      Create a new profile
     multi-cli launch <tool>/<name>   Launch the profile (binary args after `--`)
+    multi-cli continue <tool> <src> <dest>   Copy a chat session between profiles
     multi-cli list                   List all profiles
     multi-cli tools                  List supported tools and detect installs
     multi-cli doctor                 Diagnose environment
@@ -88,6 +89,278 @@ function Find-AdapterBinary {
 }
 
 # =============================================================================
+# Session continuation
+# =============================================================================
+
+$SESSION_RESERVED_ENDPOINT = 'base'
+
+# Skip automatic session seeding when the base state exceeds this size.
+$SEED_MAX_BYTES = 500 * 1024 * 1024
+
+function Get-AdapterSystemHome {
+    param($Adapter)
+    if ($Adapter.share -and $Adapter.share.systemHome) {
+        return [System.IO.Path]::GetFullPath((Resolve-PathToken $Adapter.share.systemHome))
+    }
+    return $null
+}
+
+function Resolve-SessionEndpoint {
+    param($Adapter, [string]$Tool, [string]$Name)
+    if ($Name -eq $SESSION_RESERVED_ENDPOINT) {
+        $sysHome = Get-AdapterSystemHome $Adapter
+        if (-not $sysHome) { throw "Tool '$Tool' has no system home; 'base' endpoint unavailable" }
+        return $sysHome
+    }
+    Test-ProfileName $Name
+    return Get-ProfileDir $Tool $Name
+}
+
+# Throw if an adapter-declared relative path is unsafe to join under a root:
+# absolute, drive-qualified, or containing a '..' component.
+function Assert-RelPathSafe {
+    param([string]$Path, [string]$Kind, [string]$ToolId)
+    if (-not $Path) { return }
+    $norm = $Path -replace '\\', '/'
+    if ($norm -match '^/' -or $norm -match '^[a-zA-Z]:') {
+        throw "Adapter bug: $Kind '$Path' is absolute/drive-qualified for '$ToolId'."
+    }
+    if ("/$norm/" -match '/\.\./') {
+        throw "Adapter bug: $Kind '$Path' contains '..' for '$ToolId'."
+    }
+}
+
+function Test-SessionAdapterBug {
+    param($Adapter)
+    $paths = @($Adapter.session.paths)
+    $creds = @($Adapter.session.credentials)
+    foreach ($cred in $creds) {
+        Assert-RelPathSafe -Path $cred -Kind 'credential' -ToolId $Adapter.id
+    }
+    foreach ($path in $paths) {
+        if (-not $path) { continue }
+        Assert-RelPathSafe -Path $path -Kind 'session path' -ToolId $Adapter.id
+        $normPath = ($path -replace '\\', '/').TrimEnd('/')
+        foreach ($cred in $creds) {
+            if (-not $cred) { continue }
+            $normCred = ($cred -replace '\\', '/').TrimEnd('/')
+            if ($normPath -eq $normCred -or
+                $normPath -like "$normCred/*" -or
+                $normCred -like "$normPath/*") {
+                throw "Adapter bug: session path '$path' overlaps credential '$cred' for '$($Adapter.id)'. Refusing to copy credentials."
+            }
+        }
+    }
+}
+
+# True if any component of the dest-relative path matches a credential entry
+# name, blocking files nested inside a credential-named directory.
+function Test-IsCredentialName {
+    param([string]$RelativePath, [string[]]$Credentials)
+    $components = ($RelativePath -replace '\\', '/').Split('/') | Where-Object { $_ }
+    foreach ($comp in $components) {
+        foreach ($cred in $Credentials) {
+            if (-not $cred) { continue }
+            $credLeaf = Split-Path ($cred -replace '/', '\') -Leaf
+            if ($comp -eq $credLeaf) { return $true }
+        }
+    }
+    return $false
+}
+
+# True when a filesystem item is a symlink/junction/reparse point.
+function Test-IsReparsePoint {
+    param($Item)
+    if ($Item.LinkType) { return $true }
+    return (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+}
+
+function Copy-SessionEntry {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [bool]$NoMerge,
+        [bool]$DryRun,
+        [string[]]$Credentials,
+        [string]$RelativeRoot,
+        [ref]$Copied,
+        [ref]$Skipped
+    )
+    $srcItem = Get-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue
+    if (-not $srcItem) { return }
+    if (Test-IsReparsePoint $srcItem) { return }
+    if (Test-Path -LiteralPath $Source -PathType Leaf) {
+        Copy-SessionFile -Source $Source -Destination $Destination -NoMerge $NoMerge -DryRun $DryRun -Copied $Copied -Skipped $Skipped
+        return
+    }
+    $sourceRoot = [System.IO.Path]::GetFullPath($Source)
+    $items = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Force -ErrorAction SilentlyContinue
+    foreach ($item in $items) {
+        if (Test-IsReparsePoint $item) { continue }
+        $resolved = [System.IO.Path]::GetFullPath($item.FullName)
+        if (-not $resolved.StartsWith($sourceRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $relative = $item.FullName.Substring($sourceRoot.Length).TrimStart('\', '/')
+        if (Test-IsCredentialName -RelativePath "$RelativeRoot/$relative" -Credentials $Credentials) { continue }
+        $target = Join-Path $Destination $relative
+        Copy-SessionFile -Source $item.FullName -Destination $target -NoMerge $NoMerge -DryRun $DryRun -Copied $Copied -Skipped $Skipped
+    }
+}
+
+# Copy one file atomically (temp in dest dir, then move over) preserving the
+# source mtime. Skips when dest is strictly newer, or equal mtime + equal size;
+# repairs a truncated dest whose mtime matches but whose size differs.
+function Copy-SessionFile {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [bool]$NoMerge,
+        [bool]$DryRun,
+        [ref]$Copied,
+        [ref]$Skipped
+    )
+    if ((-not $NoMerge) -and (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+        $src = Get-Item -LiteralPath $Source
+        $dst = Get-Item -LiteralPath $Destination
+        if ($dst.LastWriteTimeUtc -gt $src.LastWriteTimeUtc) { $Skipped.Value++; return }
+        if ($dst.LastWriteTimeUtc -eq $src.LastWriteTimeUtc -and $dst.Length -eq $src.Length) {
+            $Skipped.Value++; return
+        }
+    }
+    if ($DryRun) {
+        Write-Host "  would copy $Source -> $Destination"
+        $Copied.Value++
+        return
+    }
+    $parent = Split-Path -Parent $Destination
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $tmp = Join-Path $parent (".mcli-copy." + [System.IO.Path]::GetRandomFileName())
+    Copy-Item -LiteralPath $Source -Destination $tmp -Force
+    (Get-Item -LiteralPath $tmp).LastWriteTimeUtc = (Get-Item -LiteralPath $Source).LastWriteTimeUtc
+    Move-Item -LiteralPath $tmp -Destination $Destination -Force
+    $Copied.Value++
+}
+
+function Invoke-Continue {
+    param([string]$Tool, [string]$SrcName, [string]$DestName, [bool]$NoMerge = $false, [bool]$DryRun = $false)
+    if (-not $Tool -or -not $SrcName -or -not $DestName) {
+        throw "Usage: multi-cli continue <tool> <src-profile> <dest-profile> [--no-merge] [--dry-run]"
+    }
+    $adapter = Get-Adapter $Tool
+
+    if (-not $adapter.session -or -not $adapter.session.portable) {
+        $reason = if ($adapter.session) { $adapter.session.reason } else { '' }
+        Write-Host "$($adapter.displayName) sessions are not portable: $reason" -ForegroundColor Yellow
+        exit 1
+    }
+    if ($SrcName -eq $DestName) { throw "Source and destination must differ" }
+    Test-SessionAdapterBug $adapter
+
+    $srcDir  = Resolve-SessionEndpoint $adapter $Tool $SrcName
+    $destDir = Resolve-SessionEndpoint $adapter $Tool $DestName
+
+    if (-not (Test-Path $srcDir)) {
+        throw "Source endpoint '$SrcName' not found at $srcDir. Nothing to continue from."
+    }
+    if (-not (Test-Path $destDir)) {
+        throw "Destination profile '$DestName' does not exist. Create it with: multi-cli new $Tool/$DestName"
+    }
+
+    $credentials = @($adapter.session.credentials)
+    $copied = 0; $skipped = 0; $found = $false
+    if ($DryRun) { Write-Host "Dry run -- no files will be written." }
+
+    foreach ($entry in @($adapter.session.paths)) {
+        if (-not $entry) { continue }
+        if (Test-IsCredentialName -RelativePath $entry -Credentials $credentials) { continue }
+        $src = Join-Path $srcDir ($entry -replace '/', '\')
+        if (-not (Test-Path $src)) { continue }
+        $found = $true
+        $dst = Join-Path $destDir ($entry -replace '/', '\')
+        $c = [ref]$copied; $s = [ref]$skipped
+        Copy-SessionEntry -Source $src -Destination $dst -NoMerge $NoMerge -DryRun $DryRun -Credentials $credentials -RelativeRoot $entry -Copied $c -Skipped $s
+        $copied = $c.Value; $skipped = $s.Value
+    }
+
+    if (-not $found) {
+        Write-Host "No session data found at source '$SrcName'. Nothing to continue."
+        exit 0
+    }
+    Write-Host "Continued ${Tool}: $SrcName -> $DestName ($copied copied, $skipped skipped (same-or-newer))"
+    if ($adapter.session.resumeHint) { Write-Host $adapter.session.resumeHint }
+}
+
+# Total size in bytes of the adapter-declared session paths under a root.
+function Get-SessionStateSize {
+    param($Adapter, [string]$Root)
+    $total = 0
+    foreach ($entry in @($Adapter.session.paths)) {
+        if (-not $entry) { continue }
+        $p = Join-Path $Root ($entry -replace '/', '\')
+        if (-not (Test-Path $p)) { continue }
+        $sum = (Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue |
+                Measure-Object -Property Length -Sum).Sum
+        if ($sum) { $total += $sum }
+    }
+    return $total
+}
+
+# Seed session state from base into a new profile, with a size guard above the
+# threshold and a progress line for big-but-allowed copies. Returns copied count.
+function Initialize-SessionSeed {
+    param($Adapter, [string]$SysHome, [string]$ProfileDir)
+    Test-SessionAdapterBug $Adapter
+    $bytes = Get-SessionStateSize -Adapter $Adapter -Root $SysHome
+    if ($bytes -gt $SEED_MAX_BYTES) {
+        $name = Split-Path $ProfileDir -Leaf
+        Write-Host "base session state is $(Format-Bytes $bytes); skipped automatic copy -- run: multi-cli continue $($Adapter.id) base $name"
+        return 0
+    }
+    $credentials = @($Adapter.session.credentials)
+    $copied = 0; $skipped = 0
+    foreach ($entry in @($Adapter.session.paths)) {
+        if (-not $entry) { continue }
+        if (Test-IsCredentialName -RelativePath $entry -Credentials $credentials) { continue }
+        $src = Join-Path $SysHome ($entry -replace '/', '\')
+        if (-not (Test-Path $src)) { continue }
+        $dst = Join-Path $ProfileDir ($entry -replace '/', '\')
+        $c = [ref]$copied; $s = [ref]$skipped
+        Copy-SessionEntry -Source $src -Destination $dst -NoMerge $false -DryRun $false -Credentials $credentials -RelativeRoot $entry -Copied $c -Skipped $s
+        $copied = $c.Value; $skipped = $s.Value
+    }
+    if ($copied -gt 0) { Write-Host "seeding $copied session file(s) from base" }
+    return $copied
+}
+
+function Initialize-ProfileSeed {
+    param($Adapter, [string]$ProfileDir, [bool]$Shared)
+    $sysHome = Get-AdapterSystemHome $Adapter
+    $seeded = @()
+
+    if ($Adapter.session -and $Adapter.session.portable -and $sysHome -and (Test-Path $sysHome)) {
+        $copied = Initialize-SessionSeed -Adapter $Adapter -SysHome $sysHome -ProfileDir $ProfileDir
+        if ($copied -gt 0) { $seeded += "$copied session file(s)" }
+    }
+
+    if (-not $Shared -and $Adapter.share -and $sysHome -and (Test-Path $sysHome)) {
+        $assets = 0
+        foreach ($entry in @($Adapter.share.linkable)) {
+            if (-not $entry) { continue }
+            $src = Join-Path $sysHome $entry
+            $dst = Join-Path $ProfileDir $entry
+            if ((Test-Path $src) -and (-not (Test-Path $dst))) {
+                Copy-Item -Path $src -Destination $dst -Recurse -Force -ErrorAction SilentlyContinue
+                $assets++
+            }
+        }
+        if ($assets -gt 0) { $seeded += "$assets shared asset(s)" }
+    }
+
+    if ($seeded.Count -gt 0) {
+        Write-Host "Seeded from base: $($seeded -join ', ')."
+    }
+}
+
+# =============================================================================
 # Profile addressing
 # =============================================================================
 
@@ -117,7 +390,7 @@ function Get-TemplatesDir { Join-Path $BASE '.templates' }
 # =============================================================================
 
 function New-Profile {
-    param([string]$Spec, [bool]$Shared = $false, [bool]$Cli = $false, [string]$FromTemplate = '')
+    param([string]$Spec, [bool]$Shared = $false, [bool]$Cli = $false, [string]$FromTemplate = '', [bool]$NoSeed = $false)
 
     $p = Split-ProfileSpec $Spec
     Test-ProfileName $p.Name
@@ -135,6 +408,10 @@ function New-Profile {
         New-SharedProfile -Adapter $adapter -ProfileDir $profileDir
     } else {
         New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+    }
+
+    if (-not $NoSeed -and -not $FromTemplate) {
+        Initialize-ProfileSeed -Adapter $adapter -ProfileDir $profileDir -Shared $Shared
     }
 
     if ($adapter.isolation.strategy -eq 'redirectHome') {
@@ -502,16 +779,21 @@ function Start-WithEnv {
 # Listings & diagnostics
 # =============================================================================
 
+function Format-Bytes {
+    param([long]$Size)
+    if ($Size -ge 1GB) { '{0:N2} GB' -f ($Size / 1GB) }
+    elseif ($Size -ge 1MB) { '{0:N2} MB' -f ($Size / 1MB) }
+    elseif ($Size -ge 1KB) { '{0:N2} KB' -f ($Size / 1KB) }
+    else { "$Size B" }
+}
+
 function Get-FolderSize {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return '0 B' }
     $size = (Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue |
              Measure-Object -Property Length -Sum).Sum
     if (-not $size) { $size = 0 }
-    if ($size -ge 1GB) { '{0:N2} GB' -f ($size / 1GB) }
-    elseif ($size -ge 1MB) { '{0:N2} MB' -f ($size / 1MB) }
-    elseif ($size -ge 1KB) { '{0:N2} KB' -f ($size / 1KB) }
-    else { "$size B" }
+    Format-Bytes $size
 }
 
 function Show-List {
@@ -688,8 +970,9 @@ USAGE
   multi-cli <command> [args]
 
 COMMANDS
-  new <tool>/<name> [--shared] [--cli] [--from <tpl>]   Create a profile
+  new <tool>/<name> [--shared] [--cli] [--from <tpl>] [--no-seed]   Create a profile
   launch <tool>/<name> [-- args...]                     Launch the profile
+  continue <tool> <src> <dest> [--no-merge] [--dry-run] Copy a chat session src->dest ('base' = real home)
   list [<tool>]                                         List profiles
   status                                                Same as list
   rename <tool>/<old> <tool>/<new>                      Rename
@@ -716,6 +999,7 @@ EXAMPLES
   multi-cli new claude-cli/work
   multi-cli new cursor/personal --shared
   multi-cli launch codex/acme -- exec --search "fix the build"
+  multi-cli continue codex rate-limited fresh-account   # resume a chat under another account
   claude-cli-work          # via auto-generated alias on `$PATH
 
 "@ | Write-Host
@@ -732,7 +1016,7 @@ Register-ArgumentCompleter -Native -CommandName multi-cli -ScriptBlock {
     param(`$wordToComplete, `$commandAst, `$cursorPosition)
     `$base = if (`$env:MULTICLI_HOME) { `$env:MULTICLI_HOME } else { Join-Path `$env:USERPROFILE 'MultiCliProfiles' }
     `$tools = (Get-ChildItem -Directory '$ScriptDir/tools' -ErrorAction SilentlyContinue).Name
-    `$cmds = @('new','launch','list','status','rename','delete','clone','template','export','import','tools','doctor','stats','completion','help','version')
+    `$cmds = @('new','launch','continue','list','status','rename','delete','clone','template','export','import','tools','doctor','stats','completion','help','version')
     `$specs = @()
     foreach (`$t in `$tools) {
         `$dir = Join-Path `$base `$t
@@ -764,17 +1048,37 @@ function Split-LaunchArgs {
     return [pscustomobject]@{ Pre = $All; Post = @(); HadDelim = $false }
 }
 
-function Parse-NewFlags {
+function Read-NewFlags {
     param([string[]]$Tokens)
-    $shared = $false; $cli = $false; $tpl = ''
+    $shared = $false; $cli = $false; $tpl = ''; $noSeed = $false
     for ($i = 0; $i -lt $Tokens.Count; $i++) {
         switch ($Tokens[$i]) {
-            '--shared' { $shared = $true }
-            '--cli'    { $cli = $true }
-            '--from'   { $i++; if ($i -lt $Tokens.Count) { $tpl = $Tokens[$i] } }
+            '--shared'  { $shared = $true }
+            '--cli'     { $cli = $true }
+            '--no-seed' { $noSeed = $true }
+            '--from'    { $i++; if ($i -lt $Tokens.Count) { $tpl = $Tokens[$i] } }
         }
     }
-    return [pscustomobject]@{ Shared = $shared; Cli = $cli; FromTemplate = $tpl }
+    return [pscustomobject]@{ Shared = $shared; Cli = $cli; FromTemplate = $tpl; NoSeed = $noSeed }
+}
+
+function Read-ContinueArgs {
+    param([string[]]$Tokens)
+    $noMerge = $false; $dryRun = $false; $positional = @()
+    foreach ($t in $Tokens) {
+        switch ($t) {
+            '--no-merge' { $noMerge = $true }
+            '--dry-run'  { $dryRun = $true }
+            default      { $positional += $t }
+        }
+    }
+    return [pscustomobject]@{
+        Tool    = $positional[0]
+        SrcName = $positional[1]
+        DestName = $positional[2]
+        NoMerge = $noMerge
+        DryRun  = $dryRun
+    }
 }
 
 try {
@@ -783,8 +1087,16 @@ try {
             $tokens = @()
             if ($Arg2) { $tokens += $Arg2 }
             if ($ForwardArgs) { $tokens += $ForwardArgs }
-            $flags = Parse-NewFlags $tokens
-            New-Profile -Spec $Arg1 -Shared $flags.Shared -Cli $flags.Cli -FromTemplate $flags.FromTemplate
+            $flags = Read-NewFlags $tokens
+            New-Profile -Spec $Arg1 -Shared $flags.Shared -Cli $flags.Cli -FromTemplate $flags.FromTemplate -NoSeed $flags.NoSeed
+        }
+        'continue' {
+            $tokens = @()
+            if ($Arg1) { $tokens += $Arg1 }
+            if ($Arg2) { $tokens += $Arg2 }
+            if ($ForwardArgs) { $tokens += $ForwardArgs }
+            $ca = Read-ContinueArgs $tokens
+            Invoke-Continue -Tool $ca.Tool -SrcName $ca.SrcName -DestName $ca.DestName -NoMerge $ca.NoMerge -DryRun $ca.DryRun
         }
         'launch' {
             $forward = @()

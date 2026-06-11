@@ -4,3 +4,8 @@ node_modules/
 *.swp
 *~
 outreach_plan.md
+
+# Test dependencies are fetched on demand (vendored bats-core + jq binary).
+# Never commit them; tests/run-bats.sh and tests/helpers/common.bash bootstrap
+# them into tests/vendor/ when missing.
+tests/vendor/

@@ -16,6 +16,12 @@
     "linkable":    ["settings.json", "skills", "agents", "plugins", "commands"],
     "neverLink":   [".credentials.json", "todos", "projects", "history.jsonl"]
   },
+  "session": {
+    "portable":    true,
+    "paths":       ["projects", "history.jsonl", "todos"],
+    "credentials": [".credentials.json"],
+    "resumeHint":  "Resume a copied conversation with `claude --resume <session-id>`, run from the same project directory."
+  },
   "install": "npm i -g @anthropic-ai/claude-code",
   "versionCommand": ["--version"],
   "status": "stable"

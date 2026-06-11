@@ -15,11 +15,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLS_DIR="$SCRIPT_DIR"
 BASE="${MULTICLI_HOME:-$HOME/MultiCliProfiles}"
 
+# Skip automatic session seeding when the base state exceeds this size.
+SEED_MAX_BYTES=$((500 * 1024 * 1024))
+
 # =============================================================================
 # Utilities
 # =============================================================================
 
 abort() { echo "Error: $1" >&2; exit 1; }
+warn()  { echo "Warning: $1" >&2; }
+
+# Emit a diagnostic if the adapter.json for a tool is unparseable. Silent on
+# success; called by adapter-reading paths so malformed JSON is never silent.
+assert_adapter_parses() {
+  local apath="$1"
+  [ -f "$apath" ] || return 0
+  jq empty "$apath" >/dev/null 2>&1 || warn "adapter.json failed to parse: $apath"
+}
 
 platform() {
   local raw="${MULTICLI_PLATFORM:-$(uname -s)}"
@@ -36,10 +48,10 @@ need_jq() {
   command -v jq >/dev/null 2>&1 || abort "jq is required but not installed. Install via: brew install jq / apt install jq"
 }
 
-json_str() { jq -r "$1" "$2" 2>/dev/null || echo ""; }
-json_arr() { jq -r "$1 // empty | .[]?" "$2" 2>/dev/null || true; }
-json_obj_keys() { jq -r "$1 // {} | keys[]" "$2" 2>/dev/null || true; }
-json_obj_val() { jq -r "$1[\"$2\"] // empty" "$3" 2>/dev/null || echo ""; }
+json_str() { jq -r "$1 // empty" "$2" 2>/dev/null | tr -d '\r' || echo ""; }
+json_arr() { jq -r "$1 // empty | .[]?" "$2" 2>/dev/null | tr -d '\r' || true; }
+json_obj_keys() { jq -r "$1 // {} | keys[]" "$2" 2>/dev/null | tr -d '\r' || true; }
+json_obj_val() { jq -r "$1[\"$2\"] // empty" "$3" 2>/dev/null | tr -d '\r' || echo ""; }
 json_has() {
   local path="$1" file="$2"
   jq -e "$path" "$file" >/dev/null 2>&1
@@ -111,18 +123,318 @@ alias_dir()         { printf '%s/bin\n' "$BASE"; }
 templates_dir()     { printf '%s/.templates\n' "$BASE"; }
 
 # =============================================================================
+# Session continuation -- copy conversation state between endpoints
+# =============================================================================
+
+# The tool's real system home, derived from the adapter's declared systemHome
+# or, failing that, from the directory its isolation env var points at.
+adapter_system_home() {
+  local tool="$1" apath sys_home key
+  apath="$(adapter_path "$tool")"
+  sys_home="$(json_str '.share.systemHome' "$apath")"
+  if [ -z "$sys_home" ]; then
+    key="$(json_obj_keys '.isolation.env' "$apath" | head -1)"
+    [ -n "$key" ] && sys_home="$(json_obj_val '.isolation.env' "$key" "$apath")"
+    sys_home="${sys_home//\{profileDir\}/}"
+  fi
+  [ -z "$sys_home" ] && return 1
+  resolve_path_token "$sys_home"
+}
+
+# Resolve an endpoint name to a directory: 'base' is the tool's system home,
+# anything else is a profile directory.
+resolve_session_endpoint() {
+  local tool="$1" name="$2"
+  if [ "$name" = "base" ]; then
+    adapter_system_home "$tool"
+  else
+    validate_name "$name"
+    profile_dir "$tool" "$name"
+  fi
+}
+
+# Abort if an adapter-declared relative path is unsafe to join under a root:
+# absolute, drive-qualified, or containing a '..' component. These would let
+# adapter data escape the endpoint directory.
+assert_relpath_safe() {
+  local p="$1" kind="$2" tool="$3"
+  case "$p" in
+    /*|\\*)        abort "adapter bug: $kind '$p' is absolute in $tool" ;;
+    [a-zA-Z]:*)    abort "adapter bug: $kind '$p' has a drive letter in $tool" ;;
+  esac
+  case "/${p//\\//}/" in
+    */../*)        abort "adapter bug: $kind '$p' contains '..' in $tool" ;;
+  esac
+}
+
+# Abort if any session path equals, contains, or is contained by a credential
+# entry -- that combination would leak credentials and is an adapter bug.
+# Also reject any traversal/absolute paths in either list.
+assert_session_paths_safe() {
+  local tool="$1" apath p c
+  apath="$(adapter_path "$tool")"
+  while IFS= read -r c; do
+    [ -z "$c" ] && continue
+    assert_relpath_safe "$c" "credential" "$tool"
+  done < <(json_arr '.session.credentials' "$apath")
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    assert_relpath_safe "$p" "session path" "$tool"
+    while IFS= read -r c; do
+      [ -z "$c" ] && continue
+      if [ "$p" = "$c" ] || [[ "$p" == "$c"/* ]] || [[ "$c" == "$p"/* ]]; then
+        abort "adapter bug: session path '$p' overlaps credential '$c' in $tool"
+      fi
+    done < <(json_arr '.session.credentials' "$apath")
+  done < <(json_arr '.session.paths' "$apath")
+}
+
+# mtime of a file in epoch seconds (portable across GNU/BSD stat).
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}
+
+# size of a file in bytes (portable across GNU/BSD stat).
+file_size() {
+  stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0
+}
+
+# hard-link count of a file (portable across GNU/BSD stat). A legitimate
+# conversation rollout file always has nlink 1; a count above 1 means the file
+# is a hardlink (possibly to a credential), matching PS's LinkType == HardLink.
+file_nlink() {
+  stat -c %h "$1" 2>/dev/null || stat -f %l "$1" 2>/dev/null || echo 1
+}
+
+# True when src should be skipped because dest is current: dest mtime strictly
+# newer, or equal mtime with equal size. A truncated/partial dest with an equal
+# mtime but a different size is NOT current and will be repaired.
+dest_is_current() {
+  local src="$1" dst="$2" sm dm ss ds
+  [ -e "$dst" ] || return 1
+  sm="$(file_mtime "$src")"; dm="$(file_mtime "$dst")"
+  if [ "$dm" -gt "$sm" ]; then return 0; fi
+  if [ "$dm" -eq "$sm" ]; then
+    ss="$(file_size "$src")"; ds="$(file_size "$dst")"
+    [ "$ss" = "$ds" ] && return 0
+  fi
+  return 1
+}
+
+COPIED=0
+SKIPPED=0
+
+# True if any path component of the dest-relative path matches a credential
+# entry name (leaf comparison per component), blocking files nested inside a
+# credential-named directory anywhere in the tree.
+rel_matches_credential() {
+  local rel="$1"; shift
+  local creds=("$@") comp cred credleaf
+  rel="${rel//\\//}"
+  local IFS=/
+  for comp in $rel; do
+    [ -z "$comp" ] && continue
+    for cred in "${creds[@]+"${creds[@]}"}"; do
+      credleaf="$(basename "${cred//\\//}")"
+      [ "$comp" = "$credleaf" ] && return 0
+    done
+  done
+  return 1
+}
+
+# Copy one regular file, honouring the merge policy and credential blocklist.
+# Copies atomically (temp in dest dir, then rename over) so an interrupted copy
+# never leaves a partial file masquerading as current.
+copy_session_file() {
+  local src="$1" dst="$2" no_merge="$3" dry_run="$4" rel="$5"
+  shift 5
+  local creds=("$@")
+  rel_matches_credential "$rel" "${creds[@]+"${creds[@]}"}" && return 0
+  if [ "$no_merge" != true ] && dest_is_current "$src" "$dst"; then
+    SKIPPED=$((SKIPPED + 1)); return 0
+  fi
+  if [ "$dry_run" = true ]; then
+    echo "  would copy $dst"; COPIED=$((COPIED + 1)); return 0
+  fi
+  local dstdir tmp
+  dstdir="$(dirname "$dst")"
+  mkdir -p "$dstdir"
+  tmp="$(mktemp "$dstdir/.mcli-copy.XXXXXX")" || abort "cannot create temp file in $dstdir"
+  cp -p "$src" "$tmp" || { rm -f "$tmp"; abort "copy failed: $src"; }
+  mv -f "$tmp" "$dst"
+  COPIED=$((COPIED + 1))
+}
+
+# Copy a single session entry (file or directory, merged per-file). Symlinks,
+# hardlinks (nlink > 1), and any file whose resolved path escapes the source
+# root are silently skipped so credential targets are never copied into the
+# destination -- matching the PowerShell launcher's LinkType skip.
+copy_session_entry() {
+  local src="$1" dst="$2" no_merge="$3" dry_run="$4" rel_root="$5"
+  shift 5
+  local creds=("$@")
+  [ -L "$src" ] && return 0
+  [ -e "$src" ] || return 0
+  if [ -f "$src" ]; then
+    [ "$(file_nlink "$src")" -gt 1 ] && return 0
+    copy_session_file "$src" "$dst" "$no_merge" "$dry_run" "$rel_root" \
+      "${creds[@]+"${creds[@]}"}"
+    return 0
+  fi
+  local src_root f rel
+  src_root="$(cd "$src" 2>/dev/null && pwd -P)" || return 0
+  while IFS= read -r -d '' f; do
+    [ -L "$f" ] && continue
+    [ -f "$f" ] || continue
+    [ "$(file_nlink "$f")" -gt 1 ] && continue
+    case "$(cd "$(dirname "$f")" 2>/dev/null && pwd -P)/" in
+      "$src_root"/*|"$src_root"/) ;;
+      *) continue ;;
+    esac
+    rel="${f#"$src"/}"
+    copy_session_file "$f" "$dst/$rel" "$no_merge" "$dry_run" "$rel_root/$rel" \
+      "${creds[@]+"${creds[@]}"}"
+  done < <(find "$src" ! -type l -type f -print0 2>/dev/null)
+}
+
+# Copy every adapter-declared session path from src_dir to dst_dir.
+copy_session_paths() {
+  local tool="$1" src_dir="$2" dst_dir="$3" no_merge="$4" dry_run="$5"
+  local apath entry creds=()
+  apath="$(adapter_path "$tool")"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] && creds+=("$entry")
+  done < <(json_arr '.session.credentials' "$apath")
+  while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    copy_session_entry "$src_dir/$entry" "$dst_dir/$entry" \
+      "$no_merge" "$dry_run" "$entry" "${creds[@]+"${creds[@]}"}"
+  done < <(json_arr '.session.paths' "$apath")
+}
+
+cmd_continue() {
+  local tool="" src="" dst="" no_merge=false dry_run=false
+  local positionals=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-merge) no_merge=true ;;
+      --dry-run)  dry_run=true ;;
+      --*)        abort "Unknown option '$1'. Usage: multi-cli continue <tool> <src> <dest> [--no-merge] [--dry-run]" ;;
+      *)          positionals+=("$1") ;;
+    esac
+    shift
+  done
+  tool="${positionals[0]:-}"; src="${positionals[1]:-}"; dst="${positionals[2]:-}"
+  if [ -z "$tool" ] || [ -z "$src" ] || [ -z "$dst" ]; then
+    abort "Usage: multi-cli continue <tool> <src-profile> <dest-profile> [--no-merge] [--dry-run]"
+  fi
+  [ "$src" = "$dst" ] && abort "Source and destination must differ"
+
+  local apath
+  apath="$(adapter_path "$tool")"
+  [ -f "$apath" ] || abort "Unknown tool '$tool'. Run: multi-cli tools"
+  assert_adapter_parses "$apath"
+  if [ "$(json_str '.session.portable' "$apath")" != true ]; then
+    abort "$(json_str '.displayName' "$apath") sessions are not portable: $(json_str '.session.reason' "$apath")"
+  fi
+
+  assert_session_paths_safe "$tool"
+
+  local src_dir dst_dir
+  src_dir="$(resolve_session_endpoint "$tool" "$src")" || abort "Cannot resolve source '$src'"
+  dst_dir="$(resolve_session_endpoint "$tool" "$dst")" || abort "Cannot resolve destination '$dst'"
+  [ -d "$src_dir" ] || abort "Source endpoint '$src' not found at $src_dir"
+  [ -d "$dst_dir" ] || abort "Destination endpoint '$dst' not found. Create with: multi-cli new $tool/$dst"
+
+  COPIED=0; SKIPPED=0
+  copy_session_paths "$tool" "$src_dir" "$dst_dir" "$no_merge" "$dry_run"
+
+  if [ "$COPIED" -eq 0 ] && [ "$SKIPPED" -eq 0 ]; then
+    echo "No session state found for $tool/$src -- nothing to continue."
+    return 0
+  fi
+  local verb="Copied"; [ "$dry_run" = true ] && verb="Would copy"
+  echo "$verb $COPIED file(s), skipped $SKIPPED (same-or-newer)."
+  echo "$(json_str '.session.resumeHint' "$apath")"
+}
+
+# Total size in bytes of the adapter-declared session paths under base_dir.
+session_state_size() {
+  local tool="$1" base_dir="$2" apath entry total=0 bytes
+  apath="$(adapter_path "$tool")"
+  while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    [ -e "$base_dir/$entry" ] || continue
+    bytes="$(du -sk "$base_dir/$entry" 2>/dev/null | awk '{print $1 * 1024}')" || bytes=0
+    total=$((total + bytes))
+  done < <(json_arr '.session.paths' "$apath")
+  printf '%s\n' "$total"
+}
+
+# Seed session state from base into a new profile, with a size guard: above the
+# threshold we skip the copy and tell the user how to pull it in manually.
+seed_session_state() {
+  local tool="$1" base_dir="$2" pdir="$3" name bytes human
+  assert_session_paths_safe "$tool"
+  COPIED=0; SKIPPED=0
+  bytes="$(session_state_size "$tool" "$base_dir")"
+  if [ "$bytes" -gt "$SEED_MAX_BYTES" ]; then
+    human="$(format_bytes "$bytes")"
+    name="$(basename "$pdir")"
+    echo "base session state is $human; skipped automatic copy -- run: multi-cli continue $tool base $name"
+    return 0
+  fi
+  copy_session_paths "$tool" "$base_dir" "$pdir" false false
+  [ "$COPIED" -gt 0 ] && echo "seeding $COPIED session file(s) from base"
+  return 0
+}
+
+# Seed a freshly created profile from the tool's system home: session state
+# plus (for plain profiles) the adapter's linkable assets.
+seed_profile_from_base() {
+  local tool="$1" pdir="$2" shared="$3"
+  local apath base_dir
+  apath="$(adapter_path "$tool")"
+  base_dir="$(adapter_system_home "$tool")" || base_dir=""
+  local seeded=()
+
+  if [ -n "$base_dir" ] && [ -d "$base_dir" ] && \
+     [ "$(json_str '.session.portable' "$apath")" = true ]; then
+    seed_session_state "$tool" "$base_dir" "$pdir"
+    [ "$COPIED" -gt 0 ] && seeded+=("session state ($COPIED file(s))")
+  fi
+
+  if [ "$shared" != true ] && [ -n "$base_dir" ] && [ -d "$base_dir" ]; then
+    local entry copied_assets=0
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      if [ -e "$base_dir/$entry" ] && [ ! -e "$pdir/$entry" ]; then
+        cp -R "$base_dir/$entry" "$pdir/$entry" 2>/dev/null && copied_assets=$((copied_assets + 1))
+      fi
+    done < <(json_arr '.share.linkable' "$apath")
+    [ "$copied_assets" -gt 0 ] && seeded+=("$copied_assets shared asset(s)")
+  fi
+
+  if [ "${#seeded[@]}" -gt 0 ]; then
+    local IFS=", "
+    echo "Seeded from base: ${seeded[*]}"
+  fi
+}
+
+# =============================================================================
 # Profile CRUD
 # =============================================================================
 
 cmd_new() {
   local spec="$1"; shift
-  local shared=false cli=false from_template=""
+  local shared=false cli=false from_template="" seed=true
 
   while [ $# -gt 0 ]; do
     case "$1" in
-      --shared) shared=true ;;
-      --cli)    cli=true ;;
-      --from)   shift; from_template="${1:-}"; [ -z "$from_template" ] && abort "Usage: --from <template>" ;;
+      --shared)  shared=true ;;
+      --cli)     cli=true ;;
+      --no-seed) seed=false ;;
+      --from)    shift; from_template="${1:-}"; [ -z "$from_template" ] && abort "Usage: --from <template>" ;;
     esac
     shift
   done
@@ -155,6 +467,10 @@ cmd_new() {
   fi
 
   [ "$cli" = true ] && touch "$pdir/.cli"
+
+  if [ "$seed" = true ] && [ -z "$from_template" ]; then
+    seed_profile_from_base "$TOOL" "$pdir" "$shared"
+  fi
 
   create_shell_alias "$TOOL" "$NAME"
   create_shortcut "$TOOL" "$NAME"
@@ -631,15 +947,8 @@ launch_appdata() {
 # Listings & diagnostics
 # =============================================================================
 
-folder_size() {
-  local p="$1"
-  [ -d "$p" ] || { echo "0 B"; return; }
-  local bytes
-  if [ "$(platform)" = "darwin" ]; then
-    bytes="$(du -sk "$p" 2>/dev/null | awk '{print $1 * 1024}')" || bytes=0
-  else
-    bytes="$(du -sb "$p" 2>/dev/null | awk '{print $1}')" || bytes=0
-  fi
+format_bytes() {
+  local bytes="$1"
   if [ "$bytes" -ge 1073741824 ] 2>/dev/null; then
     awk "BEGIN{printf \"%.2f GB\", $bytes/1073741824}"
   elif [ "$bytes" -ge 1048576 ] 2>/dev/null; then
@@ -649,6 +958,18 @@ folder_size() {
   else
     echo "$bytes B"
   fi
+}
+
+folder_size() {
+  local p="$1"
+  [ -d "$p" ] || { echo "0 B"; return; }
+  local bytes
+  if [ "$(platform)" = "darwin" ]; then
+    bytes="$(du -sk "$p" 2>/dev/null | awk '{print $1 * 1024}')" || bytes=0
+  else
+    bytes="$(du -sb "$p" 2>/dev/null | awk '{print $1}')" || bytes=0
+  fi
+  format_bytes "$bytes"
 }
 
 cmd_list() {
@@ -862,13 +1183,14 @@ USAGE
   multi-cli <command> [args]
 
 COMMANDS
-  new <tool>/<name> [--shared] [--cli] [--from <tpl>]   Create a profile
+  new <tool>/<name> [--shared] [--cli] [--no-seed] [--from <tpl>]   Create a profile
   launch <tool>/<name> [-- args...]                     Launch the profile
   list [<tool>]                                         List profiles
   status                                                Same as list
   rename <tool>/<old> <tool>/<new>                      Rename
   delete <tool>/<name>                                  Delete (confirms)
   clone <tool>/<src> <tool>/<dest>                      Clone
+  continue <tool> <src> <dest> [--no-merge] [--dry-run] Copy session state (src/dest may be 'base')
   template save <tool>/<profile> <name>                 Save as template
   template list | delete <name>                         Manage templates
   export <tool>/<name> [path]                           Export to .tar.gz
@@ -890,6 +1212,7 @@ EXAMPLES
   multi-cli new claude-cli/work
   multi-cli new cursor/personal --shared
   multi-cli launch codex/acme -- exec --search "fix the build"
+  multi-cli continue codex acme backup   # resume a rate-limited chat under another profile
   claude-cli-work          # via auto-generated alias on \$PATH
 
 HELP
@@ -905,7 +1228,7 @@ _multi_cli_completions() {
   local base="${MULTICLI_HOME:-$HOME/MultiCliProfiles}"
   local script_dir="$(cd "$(dirname "$(command -v multi-cli 2>/dev/null || echo .)")" && pwd)"
   local tools_dir="$script_dir"
-  local cmds="new launch list status rename delete clone template export import tools doctor stats completion help version"
+  local cmds="new launch list status rename delete clone continue template export import tools doctor stats completion help version"
   local tools="" specs=""
   if [ -d "$tools_dir" ]; then
     for d in "$tools_dir"/*/; do [ -f "$d/adapter.json" ] && tools="$tools $(basename "$d")"; done
@@ -928,7 +1251,7 @@ COMP
 #compdef multi-cli
 _multi_cli() {
   local -a cmds tools specs
-  cmds=(new launch list status rename delete clone template export import tools doctor stats completion help version)
+  cmds=(new launch list status rename delete clone continue template export import tools doctor stats completion help version)
   local base="${MULTICLI_HOME:-$HOME/MultiCliProfiles}"
   local script_dir="$(cd "$(dirname "$(command -v multi-cli 2>/dev/null || echo .)")" && pwd)"
   local tools_dir="$script_dir"
@@ -981,6 +1304,7 @@ case "$cmd" in
   rename)     cmd_rename "${1:-}" "${2:-}" ;;
   delete)     cmd_delete "${1:-}" ;;
   clone)      cmd_clone "${1:-}" "${2:-}" ;;
+  continue)   cmd_continue "$@" ;;
   template)   cmd_template "$@" ;;
   export)     cmd_export "$@" ;;
   import)     cmd_import "$@" ;;

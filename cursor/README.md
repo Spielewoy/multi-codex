@@ -22,6 +22,10 @@ cursor-personal   # second window, account B — both run side-by-side
 - **full** *(default)* — separate user data dir, separate extensions dir.
 - **shared** — symlinks `sandbox.json` and `cli-config.json` from `~/.cursor/`. Auth and workspace state stay isolated.
 
+## Continue a chat across accounts
+
+Not supported. Cursor keeps chats in SQLite keyed to the workspace path, so they can't be portably copied between profiles. `multi-cli continue cursor …` is therefore unavailable.
+
 ## Caveats
 
 - Cursor's cloud sync, if enabled, can re-merge state between profiles. Disable sync per-profile after first login if you want hard isolation.

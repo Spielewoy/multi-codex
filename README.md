@@ -124,6 +124,16 @@ Each profile gets an automatic shell alias:
 | `multi-cli export <tool>/<name> [path]` | Archive a profile to `.tar.gz` (`.zip` on Windows) |
 | `multi-cli import <archive> <tool>/<name>` | Restore a profile from an archive |
 
+#### Sessions
+
+| Command | Description |
+|---------|-------------|
+| `multi-cli continue <tool> <src> <dest>` | Copy conversation state (sessions/transcripts/history) from one profile to another — never credentials |
+| `multi-cli continue <tool> <src> <dest> --no-merge` | Overwrite destination files instead of keeping newer ones |
+| `multi-cli continue <tool> <src> <dest> --dry-run` | Preview what would be copied, change nothing |
+
+`base` works as a profile name on either end and means the tool's real home dir (`~/.codex`, `~/.claude`, …). Supported for `codex`, `claude-cli`, `gemini-cli`, and `commandcode`. See [Continue a Chat Across Accounts](#continue-a-chat-across-accounts).
+
 #### Utilities
 
 | Command | Description |
@@ -150,6 +160,43 @@ multi-cli uses five isolation strategies depending on what the tool supports:
 | `sandboxUser` | Creates a dedicated OS user per profile for complete credential/keychain isolation | *(available but unused)* |
 
 Each tool's `<id>/adapter.json` declares which strategy to use.
+
+---
+
+<a id="continue-a-chat-across-accounts"></a>
+
+### Continue a Chat Across Accounts
+
+Hit a rate limit on account A mid-conversation? Switch to a profile logged into account B and pick the chat up where it stopped. `multi-cli continue` copies the portable conversation state — sessions, transcripts, history — between profiles. **Credentials are never copied.**
+
+```bash
+# You were working in codex/work (account A) and got rate-limited.
+# codex/personal is logged into account B.
+multi-cli continue codex work personal          # copy the conversation state
+multi-cli continue codex work personal --dry-run  # preview first, if you like
+
+codex-personal                                  # launch account B's profile
+codex resume <session-id>                        # resume the same chat (codex ≥ 0.30)
+```
+
+Run `codex resume` with no argument to open an interactive picker of past sessions, so you never have to look up an id. If you do need it, the session id is the UUID in the rollout filename under `sessions/YYYY/MM/DD/`.
+
+`base` is a valid profile name on either end and refers to the tool's real home dir (`~/.codex`, `~/.claude`, …), so you can continue to or from your default install.
+
+By default, files are **merged** — newer files in the destination are kept. Pass `--no-merge` to overwrite the destination instead, or `--dry-run` to preview without changing anything.
+
+After copying, resume inside the destination profile with the tool's own command:
+
+| Tool | Resume command |
+|------|----------------|
+| codex | `codex resume <session-id>` (≥ 0.30) |
+| claude-cli | `claude --resume <session-id>` (run from the same project directory) |
+| gemini-cli | `gemini --resume` (auto-saved last session) or `/chat resume <tag>` for saved checkpoints |
+| commandcode | launch from the same working directory |
+
+**Not supported:** `opencode` (sessions and credentials live in one shared SQLite database) and `cursor` (chats are stored in SQLite keyed to the workspace path).
+
+> New profiles are seeded from `base` by default — conversation state, plus skills/config assets for full profiles. Pass `--no-seed` to `multi-cli new` to start empty.
 
 ---
 
@@ -335,6 +382,16 @@ multi-cli claude-cli/work
 | `multi-cli export <工具>/<名称> [路径]` | 归档为 `.tar.gz`（Windows 为 `.zip`） |
 | `multi-cli import <归档文件> <工具>/<名称>` | 从归档恢复配置文件 |
 
+#### 会话
+
+| 命令 | 说明 |
+|------|------|
+| `multi-cli continue <工具> <源> <目标>` | 将会话状态（会话/记录/历史）从一个配置文件复制到另一个 — 绝不复制凭证 |
+| `multi-cli continue <工具> <源> <目标> --no-merge` | 覆盖目标文件，而非保留较新的文件 |
+| `multi-cli continue <工具> <源> <目标> --dry-run` | 预览将复制的内容，不做任何更改 |
+
+`base` 在源端或目标端均可作为配置文件名，表示工具的真实主目录（`~/.codex`、`~/.claude` 等）。支持 `codex`、`claude-cli`、`gemini-cli` 和 `commandcode`。详见 [跨账户继续聊天](#跨账户继续聊天)。
+
 #### 实用工具
 
 | 命令 | 说明 |
@@ -361,6 +418,43 @@ multi-cli 根据工具支持情况使用五种隔离策略：
 | `sandboxUser` | 为每个配置文件创建专用操作系统用户，实现完全的凭证/钥匙串隔离 | *（可用但未使用）* |
 
 每个工具的 `<id>/adapter.json` 声明使用哪种策略。
+
+---
+
+<a id="跨账户继续聊天"></a>
+
+### 跨账户继续聊天
+
+对话进行到一半，账户 A 触发了速率限制？切换到登录账户 B 的配置文件，从中断处接着聊。`multi-cli continue` 会在配置文件之间复制可移植的会话状态 — 会话、记录、历史。**凭证绝不会被复制。**
+
+```bash
+# 你原本在 codex/work（账户 A）工作并触发了速率限制。
+# codex/personal 登录的是账户 B。
+multi-cli continue codex work personal          # 复制会话状态
+multi-cli continue codex work personal --dry-run  # 如需，可先预览
+
+codex-personal                                  # 启动账户 B 的配置文件
+codex resume <session-id>                        # 继续同一聊天（codex ≥ 0.30）
+```
+
+直接运行 `codex resume`（不带参数）会打开历史会话的交互式选择器，无需查找 id。若确实需要，session id 即 `sessions/YYYY/MM/DD/` 下 rollout 文件名中的 UUID。
+
+`base` 在源端或目标端均可作为配置文件名，表示工具的真实主目录（`~/.codex`、`~/.claude` 等），因此可以继续到默认安装或从默认安装继续。
+
+默认情况下文件会**合并** — 保留目标中较新的文件。传入 `--no-merge` 改为覆盖目标，或 `--dry-run` 仅预览而不做更改。
+
+复制后，在目标配置文件内用工具自身的命令继续：
+
+| 工具 | 继续命令 |
+|------|----------|
+| codex | `codex resume <session-id>`（≥ 0.30） |
+| claude-cli | `claude --resume <session-id>`（在同一项目目录下运行） |
+| gemini-cli | `gemini --resume`（自动保存的上次会话）或 `/chat resume <tag>`（已保存的检查点） |
+| commandcode | 从同一工作目录启动 |
+
+**不支持：** `opencode`（会话与凭证共用一个 SQLite 数据库）和 `cursor`（聊天存储在按工作区路径键控的 SQLite 中）。
+
+> 新配置文件默认从 `base` 播种 — 会话状态，以及完全配置文件的技能/配置资源。向 `multi-cli new` 传入 `--no-seed` 可从空白开始。
 
 ---
 
