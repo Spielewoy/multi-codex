@@ -209,9 +209,9 @@ JSON
   seed_codex_base
   local secret="$MULTICLI_SCRATCH/outside-secret.txt"
   printf '%s\n' 'sk-SYMLINK-TARGET-MUST-NOT-LEAK' > "$secret"
-  if ! ln -s "$secret" "$CODEX_BASE/sessions/link.json" 2>/dev/null \
+  if ! make_symlink "$secret" "$CODEX_BASE/sessions/link.json" \
      || [ ! -L "$CODEX_BASE/sessions/link.json" ]; then
-    skip "host cannot create real POSIX symlinks (Developer Mode/admin required)"
+    skip "host cannot create real symlinks (Developer Mode/admin or POSIX ln required)"
   fi
 
   multicli new codex/backup --no-seed >/dev/null
@@ -230,9 +230,9 @@ JSON
 # (f') copy_session_entry skips a symlinked top-level entry directly (unit-level
 #     guard that does not depend on real symlink creation in a deep tree).
 @test "copy_session_entry returns early for a symlinked source entry" {
-  if ! ln -s /nonexistent-target "$MULTICLI_SCRATCH/maybe-link" 2>/dev/null \
+  if ! make_symlink /nonexistent-target "$MULTICLI_SCRATCH/maybe-link" \
      || [ ! -L "$MULTICLI_SCRATCH/maybe-link" ]; then
-    skip "host cannot create real POSIX symlinks (Developer Mode/admin required)"
+    skip "host cannot create real symlinks (Developer Mode/admin or POSIX ln required)"
   fi
   run bash -c "
     set -- help
@@ -256,17 +256,14 @@ JSON
   local marker; marker="sk-HARDLINK-REGRESSION-$RANDOM$RANDOM"
   printf '%s\n' "{\"OPENAI_API_KEY\":\"$marker\"}" > "$CODEX_BASE/auth.json"
 
-  # Hardlink a session-tree file (innocent.jsonl) onto the base auth.json. Prefer
-  # fsutil; fall back to mklink /H. Skip only if the host refuses both.
+  # Hardlink a session-tree file (innocent.jsonl) onto the base auth.json. POSIX
+  # hosts use `ln`; Windows hosts fall back to fsutil / mklink /H. Skip only if
+  # the host refuses every mechanism.
   local link="$CODEX_BASE/sessions/2026/06/11/innocent.jsonl"
   local target="$CODEX_BASE/auth.json"
-  local link_win target_win
-  link_win="$(cygpath -w "$link" 2>/dev/null || echo "$link")"
-  target_win="$(cygpath -w "$target" 2>/dev/null || echo "$target")"
-  fsutil hardlink create "$link_win" "$target_win" >/dev/null 2>&1 \
-    || cmd //c mklink /H "$link_win" "$target_win" >/dev/null 2>&1 || true
-  if [ ! -f "$link" ] || [ "$(file_nlink "$link")" -lt 2 ]; then
-    skip "host refused hardlink creation (mklink /H and fsutil both failed)"
+  make_hardlink "$target" "$link" || true
+  if [ ! -f "$link" ] || [ "$(test_file_nlink "$link")" -lt 2 ]; then
+    skip "host refused hardlink creation (ln / fsutil / mklink /H all failed)"
   fi
   # Precondition: the link really shares bytes with the credential.
   run cmp -s "$link" "$target"

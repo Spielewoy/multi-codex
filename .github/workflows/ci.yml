@@ -153,6 +153,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Pester 3.4.0 (matches the 3.x-compatible suite)
+        shell: powershell
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-PackageProvider -Name NuGet -Force -Scope CurrentUser
+          Install-Module -Name Pester -RequiredVersion 3.4.0 -Force -SkipPublisherCheck -Scope CurrentUser
+
       - name: Run the Pester suite
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-pester.ps1

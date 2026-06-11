@@ -155,6 +155,57 @@ seed_codex_base() {
   write_config "$CODEX_BASE"
 }
 
+# --- Portable link creation -------------------------------------------------
+
+# Hard-link count of a file, portable across GNU and BSD stat. Mirrors the
+# launcher's own file_nlink but lives in the test helper so .bats files can call
+# it without sourcing the launcher.
+test_file_nlink() {
+  stat -c %h "$1" 2>/dev/null || stat -f %l "$1" 2>/dev/null || echo 1
+}
+
+# True on git-bash / MSYS / Cygwin (Windows), where POSIX ln has no privilege
+# and we must fall back to fsutil / mklink.
+_multicli_is_windows() {
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*|Windows*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Create a symlink at $2 pointing at $1. POSIX hosts use `ln -s`; Windows hosts
+# fall back to `cmd //c mklink`. Returns nonzero (without aborting) if the host
+# refuses; callers should `skip` on failure rather than fail.
+make_symlink() {
+  local target="$1" link="$2"
+  if ! _multicli_is_windows; then
+    ln -s "$target" "$link" 2>/dev/null && [ -L "$link" ]
+    return
+  fi
+  local link_win target_win
+  link_win="$(cygpath -w "$link" 2>/dev/null || echo "$link")"
+  target_win="$(cygpath -w "$target" 2>/dev/null || echo "$target")"
+  cmd //c mklink "$link_win" "$target_win" >/dev/null 2>&1
+  [ -L "$link" ] || [ -e "$link" ]
+}
+
+# Create a hardlink at $2 pointing at the existing file $1. POSIX hosts use
+# `ln`; Windows hosts use fsutil, then mklink /H. Returns nonzero (without
+# aborting) if the host refuses; callers should `skip` on failure.
+make_hardlink() {
+  local target="$1" link="$2"
+  if ! _multicli_is_windows; then
+    ln "$target" "$link" 2>/dev/null && [ -f "$link" ]
+    return
+  fi
+  local link_win target_win
+  link_win="$(cygpath -w "$link" 2>/dev/null || echo "$link")"
+  target_win="$(cygpath -w "$target" 2>/dev/null || echo "$target")"
+  fsutil hardlink create "$link_win" "$target_win" >/dev/null 2>&1 \
+    || cmd //c mklink /H "$link_win" "$target_win" >/dev/null 2>&1 || true
+  [ -f "$link" ]
+}
+
 # Source the launcher so individual functions can be called directly. The
 # launcher runs need_jq + dispatch on load; passing 'help' makes that a no-op
 # (prints help to the redirected fd and returns without exiting non-zero).
