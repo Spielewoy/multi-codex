@@ -27,19 +27,22 @@ teardown() {
 
   local dst="$MULTICLI_HOME/codex/backup/history.jsonl"
   local src="$CODEX_BASE/history.jsonl"
-  local full_size; full_size="$(stat -c %s "$dst")"
+  local full_size; full_size="$(wc -c < "$dst" | tr -d '[:space:]')"
 
-  # Corrupt the dest: shrink it, then force its mtime to equal the source's.
+  # Corrupt the dest: shrink it, then force its mtime to equal the source's via
+  # touch -r (POSIX reference flag; works on GNU and BSD, no epoch arithmetic).
   truncate -s 3 "$dst"
-  touch -d "@$(stat -c %Y "$src")" "$dst"
-  [ "$(stat -c %s "$dst")" -ne "$full_size" ]
-  [ "$(stat -c %Y "$dst")" -eq "$(stat -c %Y "$src")" ]
+  touch -r "$src" "$dst"
+  [ "$(wc -c < "$dst" | tr -d '[:space:]')" -ne "$full_size" ]
+  # Mtimes are equal when neither file is newer than the other.
+  [ ! "$dst" -nt "$src" ]
+  [ ! "$dst" -ot "$src" ]
 
   run multicli continue codex base backup
   [ "$status" -eq 0 ]
   [[ "$output" == *"Copied 1 file(s), skipped 1 (same-or-newer)."* ]]
   # The truncated file was restored byte-for-byte from the source.
-  [ "$(stat -c %s "$dst")" -eq "$full_size" ]
+  [ "$(wc -c < "$dst" | tr -d '[:space:]')" -eq "$full_size" ]
   run cmp -s "$src" "$dst"
   [ "$status" -eq 0 ]
 }
@@ -51,10 +54,14 @@ teardown() {
   multicli continue codex base backup >/dev/null
 
   local dst="$MULTICLI_HOME/codex/backup/history.jsonl"
+  local src="$CODEX_BASE/history.jsonl"
   # Make the dest strictly newer AND give it distinct content so an erroneous
-  # overwrite would be detectable.
+  # overwrite would be detectable. A real later touch (now) is strictly newer
+  # than the older source -- portable, no epoch arithmetic.
   printf '%s\n' 'LOCAL-EDIT-keep-me' > "$dst"
-  touch -d "@$(( $(stat -c %Y "$CODEX_BASE/history.jsonl") + 100 ))" "$dst"
+  sleep 1
+  touch "$dst"
+  [ "$dst" -nt "$src" ]
 
   run multicli continue codex base backup
   [ "$status" -eq 0 ]
