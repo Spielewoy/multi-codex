@@ -18,7 +18,7 @@ Los perfiles schema-v1 existentes siguen siendo perfiles heredados de raíz comp
 
 ## Herramientas compatibles
 
-Este repositorio incluye 17 adaptadores. `supported` significa que multi-cli ofrece al menos un modo de aislamiento funcional en ese sistema; `unsupported` significa que el producto o el modo no está disponible allí. La fuente autorizada es [docs/support-matrix.md](docs/support-matrix.md).
+Este repositorio incluye 17 adaptadores. `supported` significa que multi-cli ofrece al menos un modo de aislamiento funcional en ese sistema; `experimental` significa que la implementación está disponible, pero aún requiere la verificación indicada en un sistema real; `unsupported` significa que el producto o el modo no está disponible allí. La fuente autorizada es [docs/support-matrix.md](docs/support-matrix.md).
 
 | Herramienta | Tipo | Windows | macOS | Linux |
 |------|------|---------|-------|-------|
@@ -37,7 +37,7 @@ Este repositorio incluye 17 adaptadores. `supported` significa que multi-cli ofr
 | [GitHub Copilot CLI](copilot-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
 | [Copilot in VS Code](copilot-vscode/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
 | [Kimi Code CLI](kimi-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Codex Desktop App](codex-gui/) | IDE | supported (OS-user isolation when the Store app is installed) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
+| [Codex Desktop App](codex-gui/) | GUI | experimental (secondary-user AppX launch with owner and session checks; real Windows E2E required) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
 | [Grok Build CLI](grok-cli/) | CLI/TUI | supported (process token via `multi-cli auth set`) | supported | supported |
 
 Cada herramienta tiene su propia carpeta en la raíz del repositorio con un `adapter.json` que describe el límite de la cuenta, el estado normal compartido y la evidencia necesaria para ser promovido a verificado.

@@ -18,7 +18,7 @@
 
 ## Поддерживаемые инструменты
 
-В репозиторий входят 17 адаптеров. `supported` означает, что multi-cli предоставляет на этой ОС хотя бы один рабочий режим изоляции; `unsupported` означает, что продукт или режим там недоступен. Авторитетный источник — [docs/support-matrix.md](docs/support-matrix.md).
+В репозиторий входят 17 адаптеров. `supported` означает, что multi-cli предоставляет на этой ОС хотя бы один рабочий режим изоляции; `experimental` означает, что реализация доступна, но еще требует указанной проверки в реальной системе; `unsupported` означает, что продукт или режим там недоступен. Авторитетный источник: [docs/support-matrix.md](docs/support-matrix.md).
 
 | Инструмент | Тип | Windows | macOS | Linux |
 |------|------|---------|-------|-------|
@@ -37,7 +37,7 @@
 | [GitHub Copilot CLI](copilot-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
 | [Copilot in VS Code](copilot-vscode/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
 | [Kimi Code CLI](kimi-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Codex Desktop App](codex-gui/) | IDE | supported (OS-user isolation when the Store app is installed) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
+| [Codex Desktop App](codex-gui/) | GUI | experimental (secondary-user AppX launch with owner and session checks; real Windows E2E required) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
 | [Grok Build CLI](grok-cli/) | CLI/TUI | supported (process token via `multi-cli auth set`) | supported | supported |
 
 У каждого инструмента есть собственная папка в корне репозитория с файлом `adapter.json`, описывающим границу аккаунта, разделяемое обычное состояние и доказательства, необходимые для повышения до статуса «верифицировано».

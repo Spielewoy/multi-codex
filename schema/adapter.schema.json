@@ -31,6 +31,7 @@
       "enum": [
         "cli",
         "ide",
+        "gui",
         "hybrid"
       ]
     },
@@ -252,6 +253,28 @@
       },
       "additionalProperties": false
     },
+    "appx": {
+      "type": "object",
+      "required": [
+        "packageName",
+        "applicationId"
+      ],
+      "properties": {
+        "packageName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storeProductId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "install": {
       "type": "string",
       "minLength": 1
@@ -351,6 +374,7 @@
         "level": {
           "enum": [
             "supported",
+            "experimental",
             "unsupported"
           ]
         },
@@ -404,7 +428,8 @@
           "account": false,
           "normalState": false,
           "concurrency": false,
-          "support": false
+          "support": false,
+          "appx": false
         }
       }
     }

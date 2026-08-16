@@ -33,8 +33,14 @@ Describe 'adapter binary discovery' {
         } finally { Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It 'returns null for an Appx package family that is not installed' {
-        (Get-AppxAdapterBinary -PackageFamilyName 'multi-cli.missing_package') | Should Be $null
+    It 'returns null for an Appx package identifier that is not installed' {
+        (Get-AppxAdapterBinary -PackageIdentifier 'multi-cli.missing_package') | Should Be $null
+    }
+
+    It 'discovers the Codex AppX package by package name' {
+        $binary = Get-AppxAdapterBinary -PackageIdentifier 'OpenAI.Codex'
+        $binary | Should Be 'appx:OpenAI.Codex'
+        $binary | Should Not Match 'WindowsApps'
     }
 }
 

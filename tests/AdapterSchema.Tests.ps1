@@ -157,16 +157,81 @@ Describe 'adapter schema validation' {
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It 'rejects the retired experimental level with a clear message' {
+    It 'accepts an experimental support level with a reason' {
         $root = New-AdapterSchemaScratch
         try {
             $adapter = Get-ValidV2AdapterJson | ConvertFrom-Json
-            $adapter.support.windows = [pscustomobject]@{ level = 'experimental'; reason = 'legacy' }
+            $adapter.support.windows = [pscustomobject]@{ level = 'experimental'; reason = 'Requires real Windows verification.' }
+            Write-TestAdapter -Root $root -Directory 'test-cli' -Json ($adapter | ConvertTo-Json -Depth 12)
+            $result = Invoke-AdapterValidator -Root $root
+
+            $result.ExitCode | Should Be 0
+            $result.Output | Should Match 'Validated 1 adapter\(s\)'
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'accepts the gui kind and rejects an unknown kind' {
+        $root = New-AdapterSchemaScratch
+        try {
+            $adapter = Get-ValidV2AdapterJson | ConvertFrom-Json
+            $adapter.kind = 'gui'
+            Write-TestAdapter -Root $root -Directory 'test-cli' -Json ($adapter | ConvertTo-Json -Depth 12)
+            (Invoke-AdapterValidator -Root $root).ExitCode | Should Be 0
+
+            $adapter.kind = 'desktop'
+            Write-TestAdapter -Root $root -Directory 'test-cli' -Json ($adapter | ConvertTo-Json -Depth 12)
+            $result = Invoke-AdapterValidator -Root $root
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match "kind 'desktop' is not one of"
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'requires a reason for experimental support' {
+        $root = New-AdapterSchemaScratch
+        try {
+            $adapter = Get-ValidV2AdapterJson | ConvertFrom-Json
+            $adapter.support.windows = [pscustomobject]@{ level = 'experimental' }
             Write-TestAdapter -Root $root -Directory 'test-cli' -Json ($adapter | ConvertTo-Json -Depth 12)
             $result = Invoke-AdapterValidator -Root $root
 
             $result.ExitCode | Should Be 1
-            $result.Output | Should Match "support.windows.level 'experimental' was retired; use 'supported' or 'unsupported'"
+            $result.Output | Should Match "support.windows.reason is required for level 'experimental'"
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'accepts AppX metadata and rejects an incomplete declaration' {
+        $root = New-AdapterSchemaScratch
+        try {
+            $adapter = Get-ValidV2AdapterJson | ConvertFrom-Json
+            $adapter.account.mechanism = 'osUserCredentialStore'
+            $adapter.account.PSObject.Properties.Remove('credentialFiles')
+            $adapter.account.PSObject.Properties.Remove('credentialPrecedence')
+            $adapter.isolation.mode = 'detached'
+            $adapter.binary.windows = @('appx:OpenAI.Codex')
+            $adapter | Add-Member -NotePropertyName appx -NotePropertyValue ([pscustomobject]@{ packageName = 'OpenAI.Codex'; applicationId = 'App'; storeProductId = '9PLM9XGG6VKS' })
+            Write-TestAdapter -Root $root -Directory 'test-cli' -Json ($adapter | ConvertTo-Json -Depth 12)
+            (Invoke-AdapterValidator -Root $root).ExitCode | Should Be 0
+
+            $adapter.appx.applicationId = ''
+            Write-TestAdapter -Root $root -Directory 'test-cli' -Json ($adapter | ConvertTo-Json -Depth 12)
+            $result = Invoke-AdapterValidator -Root $root
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'appx.applicationId is required when appx is declared'
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'rejects AppX metadata outside its owned-user detached contract' {
+        $root = New-AdapterSchemaScratch
+        try {
+            $adapter = Get-ValidV2AdapterJson | ConvertFrom-Json
+            $adapter | Add-Member -NotePropertyName appx -NotePropertyValue ([pscustomobject]@{ packageName = 'OpenAI.Codex'; applicationId = 'App' })
+            Write-TestAdapter -Root $root -Directory 'test-cli' -Json ($adapter | ConvertTo-Json -Depth 12)
+            $result = Invoke-AdapterValidator -Root $root
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'appx requires account.mechanism osUserCredentialStore'
+            $result.Output | Should Match 'appx requires isolation.mode detached'
+            $result.Output | Should Match "binary.windows must contain 'appx:OpenAI.Codex'"
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

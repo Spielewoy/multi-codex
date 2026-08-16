@@ -402,6 +402,39 @@ Describe 'schema-v2 isolated mode on Windows' {
         } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It 'refuses folder-only isolation for an AppX credential-store GUI' {
+        $scratch = New-IsolatedScratch
+        try {
+            Write-OsUserAdapter -Scratch $scratch
+            $adapterPath = Join-Path $scratch.Tools 'lockedcli\adapter.json'
+            $adapter = Get-Content -LiteralPath $adapterPath -Raw | ConvertFrom-Json
+            $adapter.kind = 'gui'
+            $adapter.isolation.mode = 'detached'
+            $adapter.binary.windows = @('appx:OpenAI.Codex')
+            $adapter | Add-Member -NotePropertyName appx -NotePropertyValue ([pscustomobject]@{
+                packageName = 'OpenAI.Codex'
+                applicationId = 'App'
+                storeProductId = '9PLM9XGG6VKS'
+            })
+            $adapter | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $adapterPath -Encoding UTF8
+
+            $created = Invoke-IsolatedLauncher -Scratch $scratch -Arguments @('new', 'lockedcli/iso', '--isolated', '--no-seed')
+            $created.ExitCode | Should Be 1
+            $created.Output | Should Match 'folder redirection does not isolate Windows Credential Manager'
+            (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'lockedcli\iso')) | Should Be $false
+
+            $profileDir = Join-Path $scratch.Profiles 'lockedcli\legacy'
+            New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+            New-Item -ItemType File -Force -Path (Join-Path $profileDir '.isolated') | Out-Null
+            $capture = Join-Path $scratch.Root 'capture.json'
+            $probe = New-EnvProbe -Scratch $scratch -Capture $capture
+            $launched = Invoke-IsolatedLauncher -Scratch $scratch -Arguments @('launch', 'lockedcli/legacy') -Probe $probe -Capture $capture
+            $launched.ExitCode | Should Be 1
+            $launched.Output | Should Match 'folder redirection does not isolate Windows Credential Manager'
+            (Test-Path -LiteralPath $capture) | Should Be $false
+        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It 'does not let isolated mode override unsupported Windows status' {
         $scratch = New-IsolatedScratch
         try {

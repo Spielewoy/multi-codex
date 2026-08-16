@@ -86,6 +86,17 @@ JSON
   [[ "$output" == *"Validated 1 adapter(s)"* ]]
 }
 
+@test "validator accepts gui and rejects an unknown kind" {
+  write_adapter test-cli "$(valid_v2_adapter | jq '.kind="gui"')"
+  run bash "$VALIDATOR" "$TOOLS_ROOT"
+  [ "$status" -eq 0 ]
+
+  write_adapter test-cli "$(valid_v2_adapter | jq '.kind="desktop"')"
+  run bash "$VALIDATOR" "$TOOLS_ROOT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"kind 'desktop' is not one of"* ]]
+}
+
 @test "validator rejects malformed JSON with the adapter path" {
   write_adapter broken '{"id":"broken"'
 
@@ -179,15 +190,53 @@ JSON
   [[ "$output" == *"Validated 1 adapter(s)"* ]]
 }
 
-@test "validator rejects the retired experimental level with a clear message" {
+@test "validator accepts experimental support with a reason" {
   local adapter
-  adapter="$(valid_v2_adapter | jq '.support.windows={"level":"experimental","reason":"legacy"}')"
+  adapter="$(valid_v2_adapter | jq '.support.windows={"level":"experimental","reason":"Requires real Windows verification."}')"
+  write_adapter test-cli "$adapter"
+
+  run bash "$VALIDATOR" "$TOOLS_ROOT"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Validated 1 adapter(s)"* ]]
+}
+
+@test "validator requires a reason for experimental support" {
+  local adapter
+  adapter="$(valid_v2_adapter | jq '.support.windows={"level":"experimental"}')"
   write_adapter test-cli "$adapter"
 
   run bash "$VALIDATOR" "$TOOLS_ROOT"
 
   [ "$status" -eq 1 ]
-  [[ "$output" == *"support.windows.level 'experimental' was retired; use 'supported' or 'unsupported'"* ]]
+  [[ "$output" == *"support.windows.reason is required for level 'experimental'"* ]]
+}
+
+@test "validator accepts complete AppX metadata and rejects an incomplete declaration" {
+  local adapter
+  adapter="$(valid_v2_adapter | jq '.account={"mechanism":"osUserCredentialStore","logoutScope":"osUser"} | .isolation.mode="detached" | .binary.windows=["appx:OpenAI.Codex"] | .appx={"packageName":"OpenAI.Codex","applicationId":"App","storeProductId":"9PLM9XGG6VKS"}')"
+  write_adapter test-cli "$adapter"
+  run bash "$VALIDATOR" "$TOOLS_ROOT"
+  [ "$status" -eq 0 ]
+
+  adapter="$(printf '%s' "$adapter" | jq '.appx.applicationId=""')"
+  write_adapter test-cli "$adapter"
+  run bash "$VALIDATOR" "$TOOLS_ROOT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"appx.applicationId is required when appx is declared"* ]]
+}
+
+@test "validator rejects AppX metadata outside its owned-user detached contract" {
+  local adapter
+  adapter="$(valid_v2_adapter | jq '.appx={"packageName":"OpenAI.Codex","applicationId":"App"}')"
+  write_adapter test-cli "$adapter"
+
+  run bash "$VALIDATOR" "$TOOLS_ROOT"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"appx requires account.mechanism osUserCredentialStore"* ]]
+  [[ "$output" == *"appx requires isolation.mode detached"* ]]
+  [[ "$output" == *"binary.windows must contain 'appx:OpenAI.Codex'"* ]]
 }
 
 @test "validator rejects retired evidenceId metadata" {

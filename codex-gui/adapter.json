@@ -2,10 +2,10 @@
   "schemaVersion": 2,
   "id": "codex-gui",
   "displayName": "Codex Desktop App",
-  "kind": "ide",
+  "kind": "gui",
   "binary": {
     "windows": [
-      "appx:OpenAI.Codex_2p2nqsd0c76g0"
+      "appx:OpenAI.Codex"
     ],
     "macos": [
       "/Applications/Codex.app/Contents/MacOS/Codex",
@@ -30,6 +30,11 @@
     ],
     "logoutScope": "osUser"
   },
+  "appx": {
+    "packageName": "OpenAI.Codex",
+    "applicationId": "App",
+    "storeProductId": "9PLM9XGG6VKS"
+  },
   "normalState": {
     "root": {
       "windows": "%USERPROFILE%\\.codex",
@@ -47,8 +52,8 @@
   },
   "support": {
     "windows": {
-      "level": "supported",
-      "reason": "Microsoft Store product 9PLM9XGG6VKS; OS-user isolation requires an elevated terminal"
+      "level": "experimental",
+      "reason": "Requires AppX registration and verified activation in the owned Windows user. Promote only after the real Windows integration test passes."
     },
     "macos": {
       "level": "unsupported",
