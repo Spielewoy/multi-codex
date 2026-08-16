@@ -97,7 +97,7 @@ validate_adapter_fields() {
   if [ "$schema_version" -eq 1 ]; then
     top_level+=$'\nshare\nsession\nstatus'
   else
-    top_level+=$'\naccount\nnormalState\nconcurrency\nsupport\nappx'
+    top_level+=$'\naccount\nnormalState\nconcurrency\nsupport'
   fi
   validate_adapter_object_fields "$manifest" '.' "$top_level" ''
   validate_adapter_object_fields "$manifest" '.isolation' $'strategy\nmode\nenv\nclearEnv\nargs\nshareFromRealHome' 'isolation'
@@ -111,7 +111,6 @@ validate_adapter_fields() {
   validate_adapter_object_fields "$manifest" '.normalState' $'root\nruntimeSubdir\nsharedPaths\nsessionPaths\nfilePaths\nunsafePaths' 'normalState'
   validate_adapter_object_fields "$manifest" '.normalState.root' $'windows\nmacos\nlinux' 'normalState.root'
   validate_adapter_object_fields "$manifest" '.concurrency' $'level\nsingletonScope' 'concurrency'
-  validate_adapter_object_fields "$manifest" '.appx' $'packageName\napplicationId\nstoreProductId' 'appx'
   validate_adapter_object_fields "$manifest" '.support' $'windows\nmacos\nlinux' 'support'
   local platform
   for platform in windows macos linux; do
@@ -157,26 +156,23 @@ validate_adapter_v1() {
   validate_adapter_path_separation "$manifest" '.session.paths' 'session path' '.session.credentials' 'credential path'
 }
 
-# Every platform row needs a level. Experimental and unsupported rows require
-# a reason; supported rows may include one for mode requirements.
+# Every platform row needs a level: 'supported' (reason optional, encouraged
+# for mode requirements) or 'unsupported' (reason required). The retired
+# verified/experimental levels are rejected with an explicit message.
 validate_adapter_support() {
   local manifest="$1" platform level reason
   for platform in windows macos linux; do
     level="$(jq -r ".support.$platform.level // empty" "$manifest")"
     case "$level" in
       supported) ;;
-      experimental)
-        reason="$(jq -r ".support.$platform.reason // empty" "$manifest")"
-        [ -n "$reason" ] || adapter_validation_error "support.$platform.reason is required for level 'experimental'"
-        ;;
       unsupported)
         reason="$(jq -r ".support.$platform.reason // empty" "$manifest")"
         [ -n "$reason" ] || adapter_validation_error "support.$platform.reason is required for level 'unsupported'"
         ;;
-      verified)
-        adapter_validation_error "support.$platform.level 'verified' was retired; use 'supported', 'experimental', or 'unsupported'"
+      verified|experimental)
+        adapter_validation_error "support.$platform.level '$level' was retired; use 'supported' or 'unsupported'"
         ;;
-      *) adapter_validation_error "support.$platform.level must be supported, experimental, or unsupported" ;;
+      *) adapter_validation_error "support.$platform.level must be supported or unsupported" ;;
     esac
   done
 }
@@ -209,22 +205,6 @@ validate_adapter_v2() {
       ;;
     *) adapter_validation_error "account.mechanism '$mechanism' is not supported" ;;
   esac
-
-  if jq -e '.appx != null' "$manifest" >/dev/null 2>&1; then
-    local package_name
-    package_name="$(jq -r '.appx.packageName // empty' "$manifest")"
-    [ -n "$package_name" ] || \
-      adapter_validation_error "appx.packageName is required when appx is declared"
-    [ -n "$(jq -r '.appx.applicationId // empty' "$manifest")" ] || \
-      adapter_validation_error "appx.applicationId is required when appx is declared"
-    [ "$mechanism" = osUserCredentialStore ] || \
-      adapter_validation_error "appx requires account.mechanism osUserCredentialStore"
-    [ "$(jq -r '.isolation.mode // empty' "$manifest")" = detached ] || \
-      adapter_validation_error "appx requires isolation.mode detached"
-    if [ -n "$package_name" ] && ! jq -e --arg target "appx:$package_name" '.binary.windows | index($target) != null' "$manifest" >/dev/null 2>&1; then
-      adapter_validation_error "binary.windows must contain 'appx:$package_name' when appx is declared"
-    fi
-  fi
 
   concurrency="$(jq -r '.concurrency.level // empty' "$manifest")"
   case "$concurrency" in multiWriter|singleWriter|unsupported) ;; *) adapter_validation_error "concurrency.level is invalid" ;; esac
@@ -273,12 +253,6 @@ validate_adapter_manifest() {
   for required in displayName kind binary isolation; do
     jq -e ".${required} != null" "$manifest" >/dev/null 2>&1 || adapter_validation_error "$required is required"
   done
-  kind="$(jq -r '.kind // empty' "$manifest")"
-  case "$kind" in
-    cli|ide|gui|hybrid) ;;
-    '') ;;
-    *) adapter_validation_error "kind '$kind' is not one of: cli, ide, gui, hybrid" ;;
-  esac
 
   schema_version="$(jq -r '.schemaVersion // 1' "$manifest" 2>/dev/null)"
   case "$schema_version" in

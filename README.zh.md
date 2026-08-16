@@ -18,7 +18,7 @@ Schema-v2 配置文件会隔离账户凭证与配额，并在边界安全时共�
 
 ## 支持的工具
 
-本仓库包含 17 个适配器。`supported` 表示 multi-cli 在该系统上至少提供一种可用的隔离模式；`experimental` 表示实现已可用，但仍需在真实系统上完成所述验证；`unsupported` 表示产品或隔离模式在该系统上不可用。权威来源为 [docs/support-matrix.md](docs/support-matrix.md)。
+本仓库包含 17 个适配器。`supported` 表示 multi-cli 在该系统上至少提供一种可用的隔离模式；`unsupported` 表示产品或隔离模式在该系统上不可用。权威来源为 [docs/support-matrix.md](docs/support-matrix.md)。
 
 | 工具 | 类型 | Windows | macOS | Linux |
 |------|------|---------|-------|-------|
@@ -37,7 +37,7 @@ Schema-v2 配置文件会隔离账户凭证与配额，并在边界安全时共�
 | [GitHub Copilot CLI](copilot-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
 | [Copilot in VS Code](copilot-vscode/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
 | [Kimi Code CLI](kimi-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Codex Desktop App](codex-gui/) | GUI | experimental (secondary-user AppX launch with owner and session checks; real Windows E2E required) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
+| [Codex Desktop App](codex-gui/) | GUI | supported (owned Windows user and Store AppX activation) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
 | [Grok Build CLI](grok-cli/) | CLI/TUI | supported (process token via `multi-cli auth set`) | supported | supported |
 
 每个工具在仓库根目录下都有自己的文件夹，其中的 `adapter.json` 描述了账户边界、共享的正常状态以及升级为“已验证”所需的证据。

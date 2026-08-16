@@ -134,16 +134,20 @@ function Test-UriBinary {
 }
 
 function Get-AppxAdapterBinary {
-    param([string]$PackageIdentifier)
-    $package = Get-AppxPackage -PackageTypeFilter Main -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -eq $PackageIdentifier -or $_.PackageFamilyName -eq $PackageIdentifier } |
+    param([string]$PackageTarget)
+    if ($PackageTarget -notmatch '^([^!]+)!(.+)$') { return $null }
+    $packageName = $Matches[1]
+    $applicationId = $Matches[2]
+    $package = Get-AppxPackage -Name $packageName -PackageTypeFilter Main -ErrorAction SilentlyContinue |
+        Where-Object { $_.SignatureKind -eq 'Store' } |
         Sort-Object Version -Descending |
         Select-Object -First 1
     if ($null -eq $package) { return $null }
     $manifest = Get-AppxPackageManifest -Package $package
-    $application = @($manifest.Package.Applications.Application) | Select-Object -First 1
+    $application = @($manifest.Package.Applications.Application) |
+        Where-Object { $_.Id -eq $applicationId } | Select-Object -First 1
     if ($null -eq $application) { return $null }
-    return "appx:$PackageIdentifier"
+    return "appx:$($package.PackageFamilyName)!$applicationId"
 }
 
 function Find-AdapterBinary {
@@ -153,7 +157,7 @@ function Find-AdapterBinary {
     if ($Adapter.binary.windows) { $candidates += $Adapter.binary.windows }
     foreach ($candidate in $candidates) {
         if ($candidate -like 'appx:*') {
-            $appxBinary = Get-AppxAdapterBinary -PackageIdentifier $candidate.Substring(5)
+            $appxBinary = Get-AppxAdapterBinary -PackageTarget $candidate.Substring(5)
             if ($appxBinary) { return $appxBinary }
             continue
         }
@@ -189,12 +193,10 @@ function Get-ObjectPropertySafe {
     return $null
 }
 
-# True only for Store apps whose credential boundary is an owned Windows user.
-function Test-AdapterAppxOsUser {
+function Test-AdapterNeedsOsUser {
     param($Adapter)
     $account = Get-ObjectPropertySafe -Object $Adapter -Name 'account'
-    $appx = Get-ObjectPropertySafe -Object $Adapter -Name 'appx'
-    return ($null -ne $appx -and (Get-ObjectPropertySafe -Object $account -Name 'mechanism') -eq 'osUserCredentialStore')
+    return (Get-ObjectPropertySafe -Object $account -Name 'mechanism') -eq 'osUserCredentialStore'
 }
 
 function Get-AdapterSystemHome {
@@ -700,19 +702,14 @@ function New-Profile {
     $profileDir = Get-ProfileDir $p.Tool $p.Name
 
     if ($Shared -and $Isolated) { throw '--shared and --isolated are mutually exclusive: choose one profile mode.' }
-    $usesAppxOsUser = Test-AdapterAppxOsUser -Adapter $adapter
-    if ($Isolated -and $usesAppxOsUser) {
-        throw "Adapter '$($adapter.id)' cannot use --isolated because folder redirection does not isolate Windows Credential Manager. Create a normal owned-user profile."
+    if ($Isolated -and (Test-AdapterNeedsOsUser -Adapter $adapter)) {
+        throw "Adapter '$($adapter.id)' cannot use --isolated because folder redirection does not isolate Windows Credential Manager."
     }
     if ($Isolated -and $adapter.isolation.strategy -ne 'accountOverlay') {
         throw "--isolated applies to schema-v2 (accountOverlay) adapters; '$($p.Tool)' uses '$($adapter.isolation.strategy)', which already isolates the whole root per profile."
     }
 
     if (Test-Path $profileDir) { throw "Profile '$Spec' already exists" }
-    if ($usesAppxOsUser) {
-        Import-Module (Resolve-MultiCliModulePath 'MultiCli.OsUser.psm1') -Force
-        Assert-OsUserProvisioningPreflight -Adapter $adapter -ProfileName $p.Name
-    }
     New-Item -ItemType Directory -Force -Path (Get-ToolProfilesDir $p.Tool) | Out-Null
 
     if ($FromTemplate) {
@@ -749,15 +746,6 @@ function New-Profile {
     } elseif ($adapter.isolation.strategy -eq 'accountOverlay') {
         Import-RuntimeModule
         Initialize-RuntimeProfile -Adapter $adapter -ProfileDir $profileDir
-    }
-
-    if ($usesAppxOsUser) {
-        try {
-            Initialize-OsUserIsolation -Adapter $adapter -ProfileDir $profileDir | Out-Null
-        } catch {
-            Remove-Item -LiteralPath $profileDir -Recurse -Force -ErrorAction SilentlyContinue
-            throw
-        }
     }
 
     if ($adapter.isolation.strategy -eq 'redirectHome') {
@@ -1005,26 +993,13 @@ function Test-AliasDirInPath {
 # when the COM shortcut write fails (never blocks profile creation).
 function New-StartMenuShortcut {
     param([string]$Tool, [string]$Name, $Adapter)
-    if (Test-AdapterAppxOsUser -Adapter $Adapter) {
-        $resultPath = Join-Path (Get-ProfileDir $Tool $Name) '.osuser-appx-bootstrap.json'
-        if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) { return $null }
-        try { $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json } catch { return $null }
-        if ($result.status -ne 'verified') { return $null }
-    }
     try {
         $linkName = "multi-cli $Tool $Name.lnk"
         $linkPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$linkName"
         $WshShell = New-Object -ComObject WScript.Shell
         $shortcut = $WshShell.CreateShortcut($linkPath)
         $shortcut.TargetPath = 'powershell.exe'
-        if (Test-AdapterAppxOsUser -Adapter $Adapter) {
-            $baseLiteral = $BASE.Replace("'", "''")
-            $launcherLiteral = $MultiCliLauncherPath.Replace("'", "''")
-            $profileLiteral = "$Tool/$Name".Replace("'", "''")
-            $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"`$env:MULTICLI_HOME = '$baseLiteral'; & '$launcherLiteral' launch '$profileLiteral'`""
-        } else {
-            $shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$MultiCliLauncherPath`" launch $Tool/$Name"
-        }
+        $shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$MultiCliLauncherPath`" launch $Tool/$Name"
         $shortcut.Save()
         return $linkPath
     } catch {
@@ -1056,10 +1031,6 @@ function Invoke-Launch {
     }
 
     $binary = Find-AdapterBinary $adapter
-    if (-not $binary -and (Test-AdapterAppxOsUser -Adapter $adapter)) {
-        $appx = Get-ObjectPropertySafe -Object $adapter -Name 'appx'
-        $binary = "appx:$($appx.packageName)"
-    }
     if (-not $binary) {
         $hint = if ($adapter.install) { " Install with: $($adapter.install)" } else { '' }
         throw "$($adapter.displayName) binary not found.$hint"
@@ -1071,8 +1042,8 @@ function Invoke-Launch {
     # Isolated profiles share nothing: the profile dir is the tool's whole
     # root, so the account-overlay runtime (shared links, overlay) is bypassed.
     if ($adapter.isolation.strategy -eq 'accountOverlay' -and (Test-Path -LiteralPath (Join-Path $profileDir '.isolated'))) {
-        if (Test-AdapterAppxOsUser -Adapter $adapter) {
-            throw "Profile '$Spec' cannot launch with --isolated because folder redirection does not isolate Windows Credential Manager. Create a normal owned-user profile."
+        if (Test-AdapterNeedsOsUser -Adapter $adapter) {
+            throw "Profile '$Spec' cannot use --isolated because folder redirection does not isolate Windows Credential Manager."
         }
         Write-Host "Launching $($adapter.displayName) profile '$Spec' [$($adapter.isolation.strategy), isolated]"
         Invoke-LaunchIsolated -Adapter $adapter -ProfileDir $profileDir -Binary $binary -BinaryArgs $BinaryArgs
@@ -1154,9 +1125,6 @@ function Invoke-LaunchAccountOverlay {
         if ($exitCode -ne 0) {
             $global:LASTEXITCODE = $exitCode
             exit $exitCode
-        }
-        if ((Test-AdapterAppxOsUser -Adapter $Adapter) -and -not (Test-Path -LiteralPath (Join-Path $ProfileDir '.cli'))) {
-            New-StartMenuShortcut -Tool $Adapter.id -Name (Split-Path $ProfileDir -Leaf) -Adapter $Adapter | Out-Null
         }
         return
     }
@@ -1447,7 +1415,7 @@ function Show-List {
 }
 
 function Show-Tools {
-    Write-Host "Tools:"
+    Write-Host "Supported tools:"
     Write-Host ""
     Write-Host ("  {0,-18} {1,-12} {2,-15} {3,-10} {4}" -f 'TOOL', 'KIND', 'STRATEGY', 'STATUS', 'INSTALLED')
     Write-Host ("  {0,-18} {1,-12} {2,-15} {3,-10} {4}" -f '----', '----', '--------', '------', '---------')
@@ -1496,9 +1464,8 @@ function Show-Doctor {
             Write-Host "  [MISS] $($a.id)$hint" -ForegroundColor DarkGray
         }
         if ($support -and $support.reason) {
-            if ($support.level -eq 'unsupported' -or $support.level -eq 'experimental') {
+            if ($support.level -eq 'unsupported') {
                 Write-Host "         $($support.level): $($support.reason)" -ForegroundColor Yellow
-                if ($support.level -eq 'experimental') { $warnings++ }
             } else {
                 Write-Host "         $($support.level): $($support.reason)"
             }

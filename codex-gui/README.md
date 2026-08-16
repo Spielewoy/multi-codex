@@ -1,72 +1,49 @@
-# codex-gui: Codex desktop app
+# codex-gui - Codex GUI
 
-Codex GUI is the OpenAI desktop application. It is a GUI, not an IDE.
+Codex GUI is the desktop application, not an IDE. On Windows, an owned OS user separates Credential Manager, AppX data, and the user's `.codex` state.
 
-On Windows, each profile runs the Microsoft Store package as a local Windows user owned by multi-cli. This separates the Windows profile, Credential Manager, `%APPDATA%`, `%LOCALAPPDATA%`, `.codex`, and AppX local state.
-
-Windows support is experimental until the real secondary-user AppX test passes for the applicable Windows and Codex package versions.
+OpenAI ships the Codex app for Windows and macOS. The app and native Codex CLI share the user's `.codex` tree; running the app as a profile-owned user gives each profile a separate credential and data namespace.
 
 ## Install
+
+Windows:
 
 ```powershell
 winget install --id 9PLM9XGG6VKS -s msstore
 ```
 
-## Create and launch a profile
+macOS: download the Codex app from [OpenAI's Codex app page](https://openai.com/index/introducing-the-codex-app/).
 
-Create the profile once from an elevated PowerShell terminal:
+## Quickstart
 
 ```powershell
 multi-cli new codex-gui/work
-```
-
-The `new` command performs the admin preflight before writing profile data, then creates the owned local user and stores its generated password in Windows Credential Manager.
-
-Launches do not require elevation after setup:
-
-```powershell
 multi-cli launch codex-gui/work
 ```
 
-The launcher resolves the installed package family, registers it for the owned user, activates its adapter-declared AUMID, and verifies the returned process owner and interactive session. A Start Menu shortcut is created only after this verification succeeds. The shortcut calls the same verified launcher.
+The first launch requires an elevated terminal so multi-cli can provision the owned Windows user. Later launches use that stored identity. The launcher registers the Store package for that user and activates its AppX application instead of copying or directly running the protected package executable.
 
-## Isolation boundary
+## Account boundary
 
-Local state and cloud data are different boundaries:
+- Mechanism: `osUserCredentialStore`.
+- Profile-local state: the owned user's `.codex` tree and credential namespace.
+- Logout scope: owned OS user.
+- Concurrency: one app instance per owned OS user.
 
-- The owned Windows user separates local credentials, files, settings, and AppX state.
-- Signing two profiles into the same OpenAI account can show the same server-side conversations and projects. Use separate OpenAI accounts for separate cloud history.
-- Service-controlled system prompts cannot be reset or customized by multi-cli.
-- `--isolated` is refused because folder redirection does not isolate Windows Credential Manager.
+## Shared normal state
 
-Nothing from the operator's normal Codex profile is copied, redirected, or modified. The launcher does not execute a copied Store payload and does not retry activation as the operator.
+Nothing is shared because the app's authentication, configuration, and sessions use the same `.codex` tree. Use `multi-cli continue codex ...` for portable CLI sessions when needed.
 
-## Failure behavior
+This boundary is local. Profiles signed into the same OpenAI account can still show the same server-side conversations and projects. Use separate OpenAI accounts when cloud history must also be separate. multi-cli cannot reset or customize service-controlled system prompts.
 
-A launch succeeds only when all of these checks pass:
+## Known limitations
 
-```text
-AppX registration exists for the owned user
-AND activation returns a live process
-AND the process belongs to the owned user
-AND the process uses the initiating interactive session
-```
+- Linux has no native Codex desktop app.
+- `--isolated` is rejected because folder redirection does not isolate Windows Credential Manager.
+- Launch fails unless the activated GUI belongs to the owned user, remains visible, and uses the initiating Windows session.
 
-Failures use the stable code `unsupported_appx_secondary_user` and report the package, owned user, phase, and Windows error. A failed launch does not create an isolated shortcut.
-
-## Real Windows test
-
-The opt-in test is intentionally excluded from normal CI because it creates a local user and launches the installed GUI:
-
-```powershell
-$env:MULTICLI_REAL_APPX_E2E = '1'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\e2e\windows\Invoke-CodexGuiAppxE2E.ps1
-```
-
-The test records the Windows build, package version, AUMID, process owner SID, and session. It never stops an existing Codex process.
-
-## Platform support
+## Support
 
 | Windows | macOS | Linux |
 |---|---|---|
-| experimental (secondary-user AppX launch with owner and session checks; real Windows E2E required) | unsupported (owned-user GUI and Keychain session not proven) | unsupported (no Codex desktop app) |
+| supported (Store app + owned OS user; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no Codex desktop app) |

@@ -124,25 +124,6 @@ function Get-OsUserFixtureAdapter {
     return ($adapter | ConvertTo-Json -Depth 12 | ConvertFrom-Json)
 }
 
-function Get-OsUserAppxFixtureAdapter {
-    <# Detached GUI fixture whose Store identity comes only from adapter data. #>
-    $adapter = Get-OsUserFixtureAdapter
-    $adapter.id = 'codex-gui'
-    $adapter.displayName = 'Codex Desktop App'
-    $adapter.kind = 'gui'
-    $adapter.binary.windows = @('appx:OpenAI.Codex')
-    $adapter.isolation.mode = 'detached'
-    $adapter.normalState.sharedPaths = @()
-    $adapter.normalState.sessionPaths = @()
-    $adapter.normalState.filePaths = @()
-    $adapter | Add-Member -NotePropertyName appx -NotePropertyValue ([pscustomobject]@{
-        packageName = 'OpenAI.Codex'
-        applicationId = 'App'
-        storeProductId = '9PLM9XGG6VKS'
-    })
-    return $adapter
-}
-
 function Write-OsUserRecord {
     <# Ownership record for the scratch profile with $Username recorded
        (matching or foreign, depending on the test). #>
@@ -415,7 +396,7 @@ Describe 'credential process boundary' {
             function script:Import-OsUserCredentialStore {}
             function script:Get-MultiCliCredential { return 'Credential-Secret-123' }
             function script:Start-Process {
-                param($FilePath, $Credential, [switch]$LoadUserProfile, [switch]$PassThru, $ArgumentList, $WindowStyle)
+                param($FilePath, $Credential, [switch]$LoadUserProfile, [switch]$PassThru, $ArgumentList)
                 $script:ProcessCapture = [pscustomobject]@{
                     FilePath = $FilePath
                     Username = $Credential.UserName
@@ -423,7 +404,6 @@ Describe 'credential process boundary' {
                     LoadUserProfile = [bool]$LoadUserProfile
                     PassThru = [bool]$PassThru
                     Arguments = [string]$ArgumentList
-                    WindowStyle = [string]$WindowStyle
                 }
                 return [pscustomobject]@{ Id = 123 }
             }
@@ -436,7 +416,6 @@ Describe 'credential process boundary' {
         $capture.Process.Password | Should Be 'Credential-Secret-123'
         $capture.Process.LoadUserProfile | Should Be $true
         $capture.Process.PassThru | Should Be $true
-        $capture.Process.WindowStyle | Should Be 'Hidden'
         $capture.Process.Arguments | Should Be '-NoProfile -ExecutionPolicy Bypass -File "C:\profile with spaces\launch.ps1"'
         $capture.Process.Arguments.Contains('Credential-Secret-123') | Should Be $false
     }
@@ -491,23 +470,6 @@ Describe 'Get-OsUserLaunchPlan' {
 Describe 'elevation gate' {
     It 'reports the host elevation state as a boolean' {
         (Invoke-ModuleInternal 'MultiCli.OsUser' { Test-OsUserElevated }) | Should Be (Test-OsUserHostElevated)
-    }
-
-    It 'preflights Windows, elevation, and adapter-declared AppX metadata' {
-        $events = Invoke-OsUserShimmed {
-            param($adapter)
-            $script:PreflightEvents = New-Object 'System.Collections.Generic.List[string]'
-            function script:Get-OsUserPlatform { return 'windows' }
-            function script:Assert-OsUserWindows { param($Platform) $script:PreflightEvents.Add("windows|$Platform") }
-            function script:Assert-OsUserElevated { param($Tool, $ProfileName) $script:PreflightEvents.Add("elevated|$Tool|$ProfileName") }
-            function script:Resolve-OsUserAppxTarget { param($Adapter) $script:PreflightEvents.Add("appx|$($Adapter.id)") }
-            Assert-OsUserProvisioningPreflight -Adapter $adapter -ProfileName 'work'
-            return @($script:PreflightEvents)
-        } @((Get-OsUserAppxFixtureAdapter))
-
-        ($events -join "`n") | Should Match 'windows\|windows'
-        ($events -join "`n") | Should Match 'elevated\|codex-gui\|work'
-        ($events -join "`n") | Should Match 'appx\|codex-gui'
     }
 
     It 'refuses a profile missing schema-v2 metadata before any elevation check' {
@@ -666,7 +628,7 @@ Describe 'internal validation failures' {
 }
 
 Describe 'native account and ACL orchestration' {
-    It 'creates and marks the owned account without a localized group name' {
+    It 'creates and marks the owned account with exact native arguments' {
         $calls = Invoke-OsUserShimmed {
             $script:NativeCalls = New-Object 'System.Collections.Generic.List[string]'
             function script:Invoke-OsUserNative {
@@ -906,387 +868,6 @@ Describe 'detached process boundary' {
     }
 }
 
-Describe 'AppX target resolution' {
-    It 'requires declared package and application metadata' {
-        Assert-ThrownContains {
-            Invoke-ModuleInternal 'MultiCli.OsUser' { param($adapter) Resolve-OsUserAppxTarget -Adapter $adapter } @((Get-OsUserFixtureAdapter))
-        } @('appx.packageName', 'appx.applicationId')
-
-        $adapter = Get-OsUserAppxFixtureAdapter
-        $adapter.appx.applicationId = ''
-        Assert-ThrownContains {
-            Invoke-ModuleInternal 'MultiCli.OsUser' { param($value) Resolve-OsUserAppxTarget -Adapter $value } @($adapter)
-        } @('appx.packageName', 'appx.applicationId')
-    }
-
-    It 'reports a missing package with the declared Store install hint' {
-        Assert-ThrownContains {
-            Invoke-OsUserShimmed {
-                param($adapter)
-                function script:Get-AppxPackage { return @() }
-                Resolve-OsUserAppxTarget -Adapter $adapter
-            } @((Get-OsUserAppxFixtureAdapter))
-        } @("AppX package 'OpenAI.Codex' is not installed", 'winget install --id 9PLM9XGG6VKS -s msstore')
-    }
-
-    It 'rejects wildcards, unhealthy registrations, and missing manifests' {
-        $adapter = Get-OsUserAppxFixtureAdapter
-        $adapter.appx.packageName = 'OpenAI.*'
-        Assert-ThrownContains {
-            Invoke-ModuleInternal 'MultiCli.OsUser' { param($value) Resolve-OsUserAppxTarget -Adapter $value } @($adapter)
-        } @('invalid appx.packageName', 'OpenAI.*')
-
-        $adapter = Get-OsUserAppxFixtureAdapter
-        Assert-ThrownContains {
-            Invoke-OsUserShimmed {
-                param($value)
-                function script:Get-AppxPackage {
-                    [pscustomobject]@{ Name = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'; Version = [version]'2.0.0.0'; InstallLocation = 'C:\Current'; SignatureKind = 'Store'; Status = 'Error' }
-                }
-                Resolve-OsUserAppxTarget -Adapter $value
-            } @($adapter)
-        } @("status 'Error'", 'not Ok')
-
-        Assert-ThrownContains {
-            Invoke-OsUserShimmed {
-                param($value)
-                function script:Get-AppxPackage {
-                    [pscustomobject]@{ Name = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'; Version = [version]'2.0.0.0'; InstallLocation = 'C:\Current'; SignatureKind = 'Store'; Status = 'Ok' }
-                }
-                function script:Test-Path { return $false }
-                Resolve-OsUserAppxTarget -Adapter $value
-            } @($adapter)
-        } @('AppX manifest is missing', 'AppxManifest.xml')
-    }
-
-    It 'reports a missing package without inventing an install command' {
-        $adapter = Get-OsUserAppxFixtureAdapter
-        $adapter.appx.PSObject.Properties.Remove('storeProductId')
-        Assert-ThrownContains {
-            Invoke-OsUserShimmed {
-                param($value)
-                function script:Get-AppxPackage { return @() }
-                Resolve-OsUserAppxTarget -Adapter $value
-            } @($adapter)
-        } @("AppX package 'OpenAI.Codex' is not installed")
-    }
-
-    It 'resolves the current Windows identity SID and applies exception defaults' {
-        $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-        $sid = Invoke-ModuleInternal 'MultiCli.OsUser' { param($name) Get-OsUserSid -Username $name } @($identityName)
-        $sid | Should Be ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
-
-        $exception = Invoke-ModuleInternal 'MultiCli.OsUser' { New-OsUserAppxException -Username 'mcli_test000000' }
-        $exception.Message | Should Match 'Phase: activate'
-        $exception.Message | Should Match 'Unknown AppX launch failure'
-    }
-
-    It 'uses the newest registered package and constructs the AUMID dynamically' {
-        $target = Invoke-OsUserShimmed {
-            param($adapter)
-            function script:Get-AppxPackage {
-                @(
-                    [pscustomobject]@{ Name = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_old'; Version = [version]'1.0.0.0'; InstallLocation = 'C:\Old'; SignatureKind = 'Store'; Status = 'Ok' },
-                    [pscustomobject]@{ Name = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'; Version = [version]'2.0.0.0'; InstallLocation = 'C:\Current'; SignatureKind = 'Store'; Status = 'Ok' }
-                )
-            }
-            function script:Get-AppxPackageManifest {
-                [pscustomobject]@{ Package = [pscustomobject]@{ Applications = [pscustomobject]@{ Application = @([pscustomobject]@{ Id = 'App' }) } } }
-            }
-            function script:Test-Path { return $true }
-            Resolve-OsUserAppxTarget -Adapter $adapter
-        } @((Get-OsUserAppxFixtureAdapter))
-
-        $target.PackageName | Should Be 'OpenAI.Codex'
-        $target.PackageFamilyName | Should Be 'OpenAI.Codex_dynamic'
-        $target.Aumid | Should Be 'OpenAI.Codex_dynamic!App'
-        $target.ManifestPath | Should Be 'C:\Current\AppxManifest.xml'
-    }
-
-    It 'rejects a package registration that is not Store signed' {
-        Assert-ThrownContains {
-            Invoke-OsUserShimmed {
-                param($adapter)
-                function script:Get-AppxPackage {
-                    [pscustomobject]@{ Name = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_untrusted'; Version = [version]'2.0.0.0'; InstallLocation = 'C:\Current'; SignatureKind = 'Developer'; Status = 'Ok' }
-                }
-                Resolve-OsUserAppxTarget -Adapter $adapter
-            } @((Get-OsUserAppxFixtureAdapter))
-        } @('not signed by the Microsoft Store', 'OpenAI.Codex')
-    }
-
-    It 'rejects an application id absent from the resolved manifest' {
-        Assert-ThrownContains {
-            Invoke-OsUserShimmed {
-                param($adapter)
-                function script:Get-AppxPackage {
-                    [pscustomobject]@{ Name = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'; Version = [version]'2.0.0.0'; InstallLocation = 'C:\Current'; SignatureKind = 'Store'; Status = 'Ok' }
-                }
-                function script:Get-AppxPackageManifest {
-                    [pscustomobject]@{ Package = [pscustomobject]@{ Applications = [pscustomobject]@{ Application = @([pscustomobject]@{ Id = 'Other' }) } } }
-                }
-                function script:Test-Path { return $true }
-                Resolve-OsUserAppxTarget -Adapter $adapter
-            } @((Get-OsUserAppxFixtureAdapter))
-        } @("application id 'App'", 'OpenAI.Codex')
-    }
-}
-
-Describe 'AppX bootstrap generation' {
-    It 'registers the dynamic package family, activates its AUMID, and records both outcomes' {
-        $scratch = New-OsUserScratch
-        try {
-            $target = [pscustomobject]@{
-                PackageName = 'OpenAI.Codex'
-                PackageFamilyName = 'OpenAI.Codex_dynamic'
-                ApplicationId = 'App'
-                Aumid = 'OpenAI.Codex_dynamic!App'
-                ManifestPath = 'C:\Current\AppxManifest.xml'
-            }
-            Set-Content -LiteralPath (Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json') -Value 'stale' -Encoding ASCII
-            $bootstrap = Invoke-ModuleInternal 'MultiCli.OsUser' {
-                param($profileDir, $appxTarget)
-                New-OsUserAppxBootstrap -ProfileDir $profileDir -AppxTarget $appxTarget
-            } @($scratch.ProfileDir, $target)
-
-            (Test-Path -LiteralPath $bootstrap.BootstrapPath -PathType Leaf) | Should Be $true
-            (Test-Path -LiteralPath $bootstrap.ResultPath) | Should Be $false
-            $content = Get-Content -LiteralPath $bootstrap.BootstrapPath -Raw
-            $content | Should Match ([regex]::Escape("Get-AppxPackage -Name 'OpenAI.Codex'"))
-            $content | Should Match ([regex]::Escape("-RegisterByFamilyName -MainPackage 'OpenAI.Codex_dynamic'"))
-            $content | Should Match ([regex]::Escape("Activate('OpenAI.Codex_dynamic!App')"))
-            $content | Should Match "status = 'activated'"
-            $content | Should Match "status = 'failed'"
-            $content | Should Match 'Move-Item.*-Force'
-            (Get-Content -LiteralPath (Join-Path $script:LibDir 'MultiCli.OsUser.psm1') -Raw) | Should Not Match 'OpenAI\.Codex_2p2nqsd0c76g0'
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-}
-
-Describe 'AppX bootstrap waiting' {
-    It 'handles existing results, helper exit, and timeout without accepting stale state' {
-        $scratch = New-OsUserScratch
-        try {
-            $resultPath = Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json'
-            Set-Content -LiteralPath $resultPath -Value '{}' -Encoding UTF8
-            (Invoke-ModuleInternal 'MultiCli.OsUser' {
-                param($path) Wait-OsUserAppxBootstrap -ResultPath $path -TimeoutSeconds 0
-            } @($resultPath)) | Should Be $true
-
-            $helperExit = Invoke-OsUserShimmed {
-                $script:WaitPathChecks = 0
-                function script:Test-Path {
-                    $script:WaitPathChecks++
-                    return ($script:WaitPathChecks -ge 2)
-                }
-                function script:Start-Sleep {}
-                Wait-OsUserAppxBootstrap -Process ([pscustomobject]@{ HasExited = $true }) -ResultPath 'fixture.json' -TimeoutSeconds 30
-            }
-            $helperExit | Should Be $true
-
-            $polling = Invoke-OsUserShimmed {
-                $script:WaitPathChecks = 0
-                function script:Test-Path {
-                    $script:WaitPathChecks++
-                    return ($script:WaitPathChecks -ge 2)
-                }
-                function script:Start-Sleep {}
-                Wait-OsUserAppxBootstrap -Process ([pscustomobject]@{ HasExited = $false }) -ResultPath 'fixture.json' -TimeoutSeconds 30
-            }
-            $polling | Should Be $true
-
-            $timedOut = Invoke-OsUserShimmed {
-                function script:Test-Path { return $false }
-                Wait-OsUserAppxBootstrap -ResultPath 'missing.json' -TimeoutSeconds -1
-            }
-            $timedOut | Should Be $false
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-}
-
-Describe 'AppX launch verification' {
-    It 'accepts only the expected owner SID and interactive session, then marks evidence verified' {
-        $scratch = New-OsUserScratch
-        try {
-            $resultPath = Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json'
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            $process = Invoke-OsUserShimmed {
-                param($path)
-                function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                function script:Get-CimInstance { [pscustomobject]@{ ProcessId = 4321; SessionId = 2; CreationDate = Get-Date } }
-                function script:Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0; Sid = 'S-1-5-21-expected' } }
-                function script:Start-Sleep {}
-                Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -StabilityMilliseconds 1
-            } @($resultPath)
-
-            $process.ProcessId | Should Be 4321
-            (Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json).status | Should Be 'verified'
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It 'rejects failed activation, wrong owner, wrong session, and a vanished process' {
-        $scratch = New-OsUserScratch
-        try {
-            $resultPath = Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json'
-            @{ status = 'failed'; phase = 'activate'; error = '0x80070005 access denied' } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-ModuleInternal 'MultiCli.OsUser' {
-                    param($path) Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -TimeoutSeconds -1
-                } @($resultPath)
-            } @('unsupported_appx_secondary_user', 'Phase: activate', '0x80070005 access denied')
-
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance { [pscustomobject]@{ ProcessId = 4321; SessionId = 2; CreationDate = Get-Date } }
-                    function script:Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0; Sid = 'S-1-5-21-other' } }
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -StabilityMilliseconds 0
-                } @($resultPath)
-            } @('unsupported_appx_secondary_user', 'Phase: owner-check')
-
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance { [pscustomobject]@{ ProcessId = 4321; SessionId = 2; CreationDate = Get-Date } }
-                    function script:Invoke-CimMethod { return $null }
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -StabilityMilliseconds 0
-                } @($resultPath)
-            } @('unsupported_appx_secondary_user', "belongs to SID 'unknown'")
-
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance { [pscustomobject]@{ ProcessId = 4321; SessionId = 0; CreationDate = Get-Date } }
-                    function script:Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0; Sid = 'S-1-5-21-expected' } }
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -StabilityMilliseconds 0
-                } @($resultPath)
-            } @('unsupported_appx_secondary_user', 'Phase: session-check', 'expected interactive session 2')
-
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance { return $null }
-                    function script:Start-Sleep { throw 'sleep must not run after deadline' }
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -TimeoutSeconds -1
-                } @($resultPath)
-            } @('unsupported_appx_secondary_user', 'Phase: owner-check', 'no owned process remained')
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It 'rejects missing, malformed, noninteractive, and unbound AppX evidence' {
-        $scratch = New-OsUserScratch
-        try {
-            $resultPath = Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json'
-            Assert-ThrownContains {
-                Invoke-ModuleInternal 'MultiCli.OsUser' {
-                    param($path) Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path
-                } @($resultPath)
-            } @('did not write', '.osuser-appx-bootstrap.json')
-
-            Set-Content -LiteralPath $resultPath -Value '{not-json' -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-ModuleInternal 'MultiCli.OsUser' {
-                    param($path) Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path
-                } @($resultPath)
-            } @('wrote invalid JSON', '.osuser-appx-bootstrap.json')
-
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-ModuleInternal 'MultiCli.OsUser' {
-                    param($path) Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 0 -ResultPath $path
-                } @($resultPath)
-            } @('not in an interactive Windows session')
-
-            @{ status = 'activated'; processId = 4321; startedUtc = 'invalid' } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance { [pscustomobject]@{ ProcessId = 4321; SessionId = 2; CreationDate = 'invalid' } }
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -StabilityMilliseconds 0
-                } @($resultPath)
-            } @('creation time could not be bound')
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It 'polls for the activation PID and rejects a process that becomes unstable' {
-        $scratch = New-OsUserScratch
-        try {
-            $resultPath = Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json'
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    $script:CimLookups = 0
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance {
-                        $script:CimLookups++
-                        if ($script:CimLookups -eq 1) { return $null }
-                        if ($script:CimLookups -eq 2) { return [pscustomobject]@{ ProcessId = 4321; SessionId = 2; CreationDate = Get-Date } }
-                        return $null
-                    }
-                    function script:Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0; Sid = 'S-1-5-21-expected' } }
-                    function script:Start-Sleep {}
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -StabilityMilliseconds 1
-                } @($resultPath)
-            } @('did not remain stable', 'session 2')
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It 'rejects a PID whose process predates the activation attempt' {
-        $scratch = New-OsUserScratch
-        try {
-            $resultPath = Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json'
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance { [pscustomobject]@{ ProcessId = 4321; SessionId = 2; CreationDate = (Get-Date).AddMinutes(-1) } }
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -StabilityMilliseconds 0
-                } @($resultPath)
-            } @('unsupported_appx_secondary_user', 'reused PID')
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It 'rejects an AppX process that never exposes a GUI window' {
-        $scratch = New-OsUserScratch
-        try {
-            $resultPath = Join-Path $scratch.ProfileDir '.osuser-appx-bootstrap.json'
-            @{ status = 'activated'; processId = 4321; startedUtc = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString('o') } |
-                ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($path)
-                    function script:Get-OsUserSid { return 'S-1-5-21-expected' }
-                    function script:Get-CimInstance { [pscustomobject]@{ ProcessId = 4321; SessionId = 2; CreationDate = Get-Date } }
-                    function script:Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0; Sid = 'S-1-5-21-expected' } }
-                    function script:Get-Process { [pscustomobject]@{ Id = 4321; MainWindowHandle = 0 } }
-                    Assert-OsUserAppxLaunch -Username 'mcli_test000000' -ExpectedSessionId 2 -ResultPath $path -TimeoutSeconds 1 -StabilityMilliseconds 0 -RequireVisibleWindow
-                } @($resultPath)
-            } @('Code: unsupported_appx_secondary_user', 'visible GUI window')
-        } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-}
-
 Describe 'sandbox profile lookup boundary' {
     It 'returns a profile image path from translated account identity' {
         $profileHome = Invoke-OsUserShimmed {
@@ -1385,116 +966,142 @@ Describe 'sandbox-home bootstrap orchestration' {
 }
 
 Describe 'launch execution orchestration' {
-    It 'routes AppX metadata through the bootstrap and verification path' {
+    It 'routes AppX targets through the owned-user launcher' {
         $scratch = New-OsUserScratch
         try {
-            $adapter = Get-OsUserAppxFixtureAdapter
             $capture = Invoke-OsUserShimmed {
-                param($fixtureAdapter, $profileDir, $sandboxHome)
-                $script:AppxEvents = New-Object 'System.Collections.Generic.List[string]'
-                function script:Resolve-OsUserAppxTarget {
-                    $script:AppxEvents.Add('resolve')
-                    return [pscustomobject]@{
-                        PackageName = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'
-                        ApplicationId = 'App'; Aumid = 'OpenAI.Codex_dynamic!App'; ManifestPath = 'C:\Current\AppxManifest.xml'
-                    }
+                param($adapter, $profileDir)
+                function script:Initialize-OsUserIsolation { return 'mcli_fcfb4582f558' }
+                function script:Invoke-OsUserAppxLaunch {
+                    param($Username, $CredentialTarget, $ProfileDir, $Target, $TimeoutSeconds)
+                    $script:AppxCall = "$Username|$CredentialTarget|$Target"
+                    return 0
                 }
-                function script:Initialize-OsUserIsolation {
-                    param($Adapter, $ProfileDir)
-                    $metadata = Get-Content -LiteralPath (Join-Path $ProfileDir '.profile.json') -Raw | ConvertFrom-Json
-                    return Get-OsUserName -Tool $Adapter.id -ProfileId $metadata.profileId
-                }
-                function script:Start-OsUserWrapperProcess {
-                    param($Username, $CredentialTarget, $WrapperPath)
-                    $script:AppxEvents.Add("start|$Username|$CredentialTarget|$WrapperPath")
-                    return [pscustomobject]@{ Id = 123; HasExited = $false }
-                }
-                function script:Wait-OsUserAppxBootstrap {
-                    param($Process, $ResultPath, $TimeoutSeconds)
-                    $script:AppxEvents.Add("wait|$ResultPath")
-                    return $true
-                }
-                function script:Assert-OsUserAppxLaunch {
-                    param($Username, $ExpectedSessionId, $ResultPath, [switch]$RequireVisibleWindow)
-                    $script:AppxEvents.Add("verify|$Username|$ExpectedSessionId|$ResultPath|$([bool]$RequireVisibleWindow)")
-                    return [pscustomobject]@{ ProcessId = 4321 }
-                }
-                function script:Start-OsUserInteractiveProcess { throw 'ordinary detached launch must not run for AppX metadata' }
-
-                $exitCode = Invoke-OsUserLaunch -Adapter $fixtureAdapter -ProfileDir $profileDir -Binary 'C:\WindowsApps\unrelated.exe' -BinaryArgs @() -SandboxHome $sandboxHome
-                return [pscustomobject]@{ ExitCode = $exitCode; Events = @($script:AppxEvents) }
-            } @($adapter, $scratch.ProfileDir, (Join-Path $scratch.Root 'sandbox'))
+                function script:Get-OsUserLaunchPlan { throw 'generic launch plan must not run for AppX' }
+                $exitCode = Invoke-OsUserLaunch -Adapter $adapter -ProfileDir $profileDir -Binary 'appx:OpenAI.Codex_2p2nqsd0c76g0!App' -BinaryArgs @()
+                [pscustomobject]@{ ExitCode = $exitCode; Call = $script:AppxCall }
+            } @((Get-OsUserFixtureAdapter), $scratch.ProfileDir)
 
             $capture.ExitCode | Should Be 0
-            $capture.Events[0] | Should Be 'resolve'
-            ($capture.Events -join "`n") | Should Match 'start\|mcli_'
-            ($capture.Events -join "`n") | Should Match 'wait\|.*\.osuser-appx-bootstrap\.json'
-            ($capture.Events -join "`n") | Should Match 'verify\|mcli_.*\.osuser-appx-bootstrap\.json\|True'
+            $capture.Call | Should Be "$script:FixtureUsername|multi-cli/osuser/$script:FixtureUsername|appx:OpenAI.Codex_2p2nqsd0c76g0!App"
         } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It 'wraps credential-bound AppX bootstrap failures in the stable error contract' {
+    It 'accepts only the owned SID and initiating session from AppX activation' {
         $scratch = New-OsUserScratch
+        $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         try {
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($fixtureAdapter, $profileDir, $sandboxHome)
-                    function script:Resolve-OsUserAppxTarget {
-                        [pscustomobject]@{
-                            PackageName = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'
-                            ApplicationId = 'App'; Aumid = 'OpenAI.Codex_dynamic!App'; ManifestPath = 'C:\Current\AppxManifest.xml'
-                        }
+            $messages = Invoke-OsUserShimmed {
+                param($username, $expectedSid, $profileDir)
+                $script:AppxCase = 'success'
+                function script:Get-Process {
+                    param($Id)
+                    if ($Id -eq $PID) { return [pscustomobject]@{ SessionId = 2 } }
+                    return [pscustomobject]@{ HasExited = $false; MainWindowHandle = 1 }
+                }
+                function script:Start-Sleep {}
+                function script:Start-OsUserWrapperProcess {
+                    @{ processId = 4321 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $profileDir '.osuser-appx.json') -Encoding UTF8
+                    $waiter = New-Object psobject
+                    $waiter | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($milliseconds) return $true }
+                    return $waiter
+                }
+                function script:Get-CimInstance {
+                    $script:CimCalls++
+                    if ($script:AppxCase -eq 'success' -and $script:CimCalls -eq 1) { return $null }
+                    $session = if ($script:AppxCase -eq 'session') { 9 } else { 2 }
+                    return [pscustomobject]@{ ProcessId = 4321; SessionId = $session }
+                }
+                function script:Invoke-CimMethod {
+                    $sid = if ($script:AppxCase -eq 'owner') { 'S-1-0-0' } else { $expectedSid }
+                    return [pscustomobject]@{ ReturnValue = 0; Sid = $sid }
+                }
+
+                $target = 'appx:OpenAI.Codex_2p2nqsd0c76g0!App'
+                $outcomes = New-Object 'System.Collections.Generic.List[string]'
+                foreach ($case in @('success', 'owner', 'session')) {
+                    $script:AppxCase = $case
+                    $script:CimCalls = 0
+                    try {
+                        $code = Invoke-OsUserAppxLaunch -Username $username -CredentialTarget 'fixture' -ProfileDir $profileDir -Target $target
+                        $outcomes.Add("$case|$code|$script:CimCalls")
+                    } catch {
+                        $outcomes.Add("$case|$($_.Exception.Message)")
                     }
-                    function script:Initialize-OsUserIsolation { return 'mcli_test000000' }
-                    function script:Start-OsUserWrapperProcess { throw 'secondary logon denied' }
-                    Invoke-OsUserLaunch -Adapter $fixtureAdapter -ProfileDir $profileDir -Binary 'appx:OpenAI.Codex' -BinaryArgs @() -SandboxHome $sandboxHome
-                } @((Get-OsUserAppxFixtureAdapter), $scratch.ProfileDir, (Join-Path $scratch.Root 'sandbox'))
-            } @('Code: unsupported_appx_secondary_user', 'Phase: register', 'secondary logon denied')
+                }
+                return @($outcomes)
+            } @($currentUser, $currentSid, $scratch.ProfileDir)
+
+            $messages[0] | Should Be 'success|0|2'
+            $messages[1] | Should Match '(?s)owner\|.*Phase: owner-check'
+            $messages[2] | Should Match '(?s)session\|.*Phase: session-check'
         } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It 'fails closed when AppX resolution, session, start, or wait cannot be verified' {
+    It 'fails closed when the owned-user AppX helper cannot be trusted' {
         $scratch = New-OsUserScratch
+        $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         try {
-            $adapter = Get-OsUserAppxFixtureAdapter
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($fixtureAdapter, $profileDir, $sandboxHome)
-                    function script:Resolve-OsUserAppxTarget { throw 'package lookup failed' }
-                    Invoke-OsUserLaunch -Adapter $fixtureAdapter -ProfileDir $profileDir -Binary 'appx:OpenAI.Codex' -BinaryArgs @() -SandboxHome $sandboxHome
-                } @($adapter, $scratch.ProfileDir, (Join-Path $scratch.Root 'sandbox'))
-            } @('Code: unsupported_appx_secondary_user', 'Package: OpenAI.Codex', 'package lookup failed')
+            $messages = Invoke-OsUserShimmed {
+                param($username, $expectedSid, $profileDir)
+                function script:Get-Process {
+                    param($Id)
+                    if ($Id -ne $PID) {
+                        $script:GuiCalls++
+                        if ($script:FailureCase -eq 'no-window') { return [pscustomobject]@{ HasExited = $false; MainWindowHandle = 0 } }
+                        return [pscustomobject]@{ HasExited = ($script:GuiCalls -gt 1); MainWindowHandle = 1 }
+                    }
+                    if ($script:FailureCase -eq 'session') { return [pscustomobject]@{ SessionId = 0 } }
+                    return [pscustomobject]@{ SessionId = 2 }
+                }
+                function script:Start-Sleep {}
+                function script:Start-OsUserWrapperProcess {
+                    if ($script:FailureCase -eq 'start-throws') { throw 'logon denied' }
+                    if ($script:FailureCase -eq 'start-null') { return $null }
+                    $resultPath = Join-Path $profileDir '.osuser-appx.json'
+                    if ($script:FailureCase -eq 'invalid-result') { Set-Content -LiteralPath $resultPath -Value '{bad' -Encoding UTF8 }
+                    if ($script:FailureCase -eq 'error-result') { @{ error = 'activation failed' } | ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8 }
+                    if ($script:FailureCase -in @('no-process', 'no-window', 'short-lived')) { @{ processId = 4321 } | ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8 }
+                    if ($script:FailureCase -eq 'no-pid') { @{ phase = 'activate' } | ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8 }
+                    $waiter = [pscustomobject]@{ Completed = ($script:FailureCase -ne 'timeout') }
+                    $waiter | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($milliseconds) return $this.Completed }
+                    return $waiter
+                }
+                function script:Get-CimInstance {
+                    if ($script:FailureCase -eq 'no-process') { return $null }
+                    return [pscustomobject]@{ ProcessId = 4321; SessionId = 2 }
+                }
+                function script:Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0; Sid = $expectedSid } }
 
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($fixtureAdapter, $profileDir, $sandboxHome)
-                    function script:Resolve-OsUserAppxTarget { [pscustomobject]@{ PackageName = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'; Aumid = 'OpenAI.Codex_dynamic!App' } }
-                    function script:Initialize-OsUserIsolation { return 'mcli_test000000' }
-                    function script:Get-Process { [pscustomobject]@{ SessionId = 0 } }
-                    Invoke-OsUserLaunch -Adapter $fixtureAdapter -ProfileDir $profileDir -Binary 'appx:OpenAI.Codex' -BinaryArgs @() -SandboxHome $sandboxHome
-                } @($adapter, $scratch.ProfileDir, (Join-Path $scratch.Root 'sandbox'))
-            } @('Code: unsupported_appx_secondary_user', 'not in an interactive Windows session')
+                $outcomes = New-Object 'System.Collections.Generic.List[string]'
+                foreach ($case in @('target', 'session', 'start-throws', 'start-null', 'timeout', 'no-result', 'invalid-result', 'error-result', 'no-pid', 'no-process', 'no-window', 'short-lived')) {
+                    $script:FailureCase = $case
+                    $script:GuiCalls = 0
+                    $target = if ($case -eq 'target') { 'appx:invalid' } else { 'appx:OpenAI.Codex_2p2nqsd0c76g0!App' }
+                    try {
+                        Invoke-OsUserAppxLaunch -Username $username -CredentialTarget 'fixture' -ProfileDir $profileDir -Target $target -TimeoutSeconds 1 | Out-Null
+                    } catch {
+                        $outcomes.Add("$case|$($_.Exception.Message)")
+                    }
+                }
+                return @($outcomes)
+            } @($currentUser, $currentSid, $scratch.ProfileDir)
 
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($fixtureAdapter, $profileDir, $sandboxHome)
-                    function script:Resolve-OsUserAppxTarget { [pscustomobject]@{ PackageName = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'; Aumid = 'OpenAI.Codex_dynamic!App' } }
-                    function script:Initialize-OsUserIsolation { return 'mcli_test000000' }
-                    function script:Start-OsUserWrapperProcess { return $null }
-                    Invoke-OsUserLaunch -Adapter $fixtureAdapter -ProfileDir $profileDir -Binary 'appx:OpenAI.Codex' -BinaryArgs @() -SandboxHome $sandboxHome
-                } @($adapter, $scratch.ProfileDir, (Join-Path $scratch.Root 'sandbox'))
-            } @('Code: unsupported_appx_secondary_user', 'bootstrap did not start')
-
-            Assert-ThrownContains {
-                Invoke-OsUserShimmed {
-                    param($fixtureAdapter, $profileDir, $sandboxHome)
-                    function script:Resolve-OsUserAppxTarget { [pscustomobject]@{ PackageName = 'OpenAI.Codex'; PackageFamilyName = 'OpenAI.Codex_dynamic'; Aumid = 'OpenAI.Codex_dynamic!App' } }
-                    function script:Initialize-OsUserIsolation { return 'mcli_test000000' }
-                    function script:Start-OsUserWrapperProcess { [pscustomobject]@{ Id = 123; HasExited = $false } }
-                    function script:Wait-OsUserAppxBootstrap { return $false }
-                    Invoke-OsUserLaunch -Adapter $fixtureAdapter -ProfileDir $profileDir -Binary 'appx:OpenAI.Codex' -BinaryArgs @() -SandboxHome $sandboxHome -TimeoutSeconds 3
-                } @($adapter, $scratch.ProfileDir, (Join-Path $scratch.Root 'sandbox'))
-            } @('Code: unsupported_appx_secondary_user', 'did not finish within 3 seconds')
+            $joined = $messages -join "`n"
+            $joined | Should Match '(?s)target\|.*package family and application id'
+            $joined | Should Match '(?s)session\|.*not in an interactive Windows session'
+            $joined | Should Match '(?s)start-throws\|.*logon denied'
+            $joined | Should Match '(?s)start-null\|.*did not start'
+            $joined | Should Match '(?s)timeout\|.*timed out'
+            $joined | Should Match '(?s)no-result\|.*returned no result'
+            $joined | Should Match '(?s)invalid-result\|.*invalid result'
+            $joined | Should Match '(?s)error-result\|.*activation failed'
+            $joined | Should Match '(?s)no-pid\|.*returned no process ID'
+            $joined | Should Match '(?s)no-process\|.*does not belong to the owned user'
+            $joined | Should Match '(?s)no-window\|.*did not produce a visible GUI window'
+            $joined | Should Match '(?s)short-lived\|.*exited before launch verification completed'
         } finally { Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

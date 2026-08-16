@@ -20,7 +20,7 @@
 
 ## الأدوات المدعومة
 
-يتضمن هذا المستودع 17 محوّلًا. تعني `supported` أن multi-cli يوفر وضع عزل عاملًا واحدًا على الأقل في ذلك النظام، وتعني `experimental` أن التنفيذ متاح لكنه لا يزال يتطلب التحقق المحدد على نظام حقيقي، وتعني `unsupported` أن المنتج أو وضع العزل غير متاح هناك. المصدر المعتمد هو [docs/support-matrix.md](docs/support-matrix.md).
+يتضمن هذا المستودع 17 محوّلًا. تعني `supported` أن multi-cli يوفر وضع عزل عاملًا واحدًا على الأقل في ذلك النظام، وتعني `unsupported` أن المنتج أو وضع العزل غير متاح هناك. المصدر المعتمد هو [docs/support-matrix.md](docs/support-matrix.md).
 
 | الأداة | النوع | Windows | macOS | Linux |
 |------|------|---------|-------|-------|
@@ -39,7 +39,7 @@
 | [GitHub Copilot CLI](copilot-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
 | [Copilot in VS Code](copilot-vscode/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
 | [Kimi Code CLI](kimi-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Codex Desktop App](codex-gui/) | GUI | experimental (secondary-user AppX launch with owner and session checks; real Windows E2E required) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
+| [Codex Desktop App](codex-gui/) | GUI | supported (owned Windows user and Store AppX activation) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
 | [Grok Build CLI](grok-cli/) | CLI/TUI | supported (process token via `multi-cli auth set`) | supported | supported |
 
 لكل أداة مجلد خاص بها في جذر المستودع يحتوي على ملف `adapter.json` يصف حد الحساب والحالة العادية المشتركة والأدلة المطلوبة للترقية إلى حالة موثَّقة.

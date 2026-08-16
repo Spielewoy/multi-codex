@@ -33,14 +33,18 @@ Describe 'adapter binary discovery' {
         } finally { Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It 'returns null for an Appx package identifier that is not installed' {
-        (Get-AppxAdapterBinary -PackageIdentifier 'multi-cli.missing_package') | Should Be $null
+    It 'returns null for an Appx package family that is not installed' {
+        (Get-AppxAdapterBinary -PackageTarget 'multi-cli.missing_package!App') | Should Be $null
     }
 
-    It 'discovers the Codex AppX package by package name' {
-        $binary = Get-AppxAdapterBinary -PackageIdentifier 'OpenAI.Codex'
-        $binary | Should Be 'appx:OpenAI.Codex'
-        $binary | Should Not Match 'WindowsApps'
+    It 'returns an AppX activation target instead of a protected payload path' {
+        function Get-AppxPackage { [pscustomobject]@{ PackageFamilyName = 'OpenAI.Codex_fixture'; SignatureKind = 'Store'; Version = [version]'2.0' } }
+        function Get-AppxPackageManifest {
+            [pscustomobject]@{ Package = [pscustomobject]@{ Applications = [pscustomobject]@{ Application = @(
+                [pscustomobject]@{ Id = 'Helper' }, [pscustomobject]@{ Id = 'App' }
+            ) } } }
+        }
+        (Get-AppxAdapterBinary -PackageTarget 'OpenAI.Codex!App') | Should Be 'appx:OpenAI.Codex_fixture!App'
     }
 }
 

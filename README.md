@@ -18,7 +18,7 @@ Profiles created by older multi-cli versions keep their whole-root behavior unti
 
 ## Supported Tools
 
-17 adapters ship in this repository. Status is per operating system and binary: `supported` means multi-cli provides account isolation on that OS, `experimental` means the implementation is available but still requires the stated real-system verification, and `unsupported` means no isolation mode works there. The authoritative source is [docs/support-matrix.md](docs/support-matrix.md).
+17 adapters ship in this repository. Status is per operating system and binary: `supported` means multi-cli provides account isolation on that OS (any mode requirements are noted), and `unsupported` means no isolation mode works there. The authoritative source is [docs/support-matrix.md](docs/support-matrix.md).
 
 | Tool | Kind | Windows | macOS | Linux |
 |------|------|---------|-------|-------|
@@ -37,7 +37,7 @@ Profiles created by older multi-cli versions keep their whole-root behavior unti
 | [GitHub Copilot CLI](copilot-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
 | [Copilot in VS Code](copilot-vscode/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
 | [Kimi Code CLI](kimi-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Codex Desktop App](codex-gui/) | GUI | experimental (secondary-user AppX launch with owner and session checks; real Windows E2E required) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
+| [Codex Desktop App](codex-gui/) | GUI | supported (owned Windows user and Store AppX activation) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
 | [Grok Build CLI](grok-cli/) | CLI/TUI | supported (process token via `multi-cli auth set`) | supported | supported |
 
 Each tool has its own folder at the repo root with an `adapter.json` describing the account boundary, the shared normal state, and the per-OS support status.

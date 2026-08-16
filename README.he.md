@@ -20,7 +20,7 @@
 
 ## כלים נתמכים
 
-המאגר כולל 17 מתאמים. `supported` פירושו ש-multi-cli מספק לפחות מצב בידוד עובד אחד במערכת זו; `experimental` פירושו שהמימוש זמין אך עדיין דורש את האימות המצוין במערכת אמיתית; `unsupported` פירושו שהמוצר או מצב הבידוד אינם זמינים בה. המקור הסמכותי הוא [docs/support-matrix.md](docs/support-matrix.md).
+המאגר כולל 17 מתאמים. `supported` פירושו ש-multi-cli מספק לפחות מצב בידוד עובד אחד במערכת זו; `unsupported` פירושו שהמוצר או מצב הבידוד אינם זמינים בה. המקור הסמכותי הוא [docs/support-matrix.md](docs/support-matrix.md).
 
 | כלי | סוג | Windows | macOS | Linux |
 |------|------|---------|-------|-------|
@@ -39,7 +39,7 @@
 | [GitHub Copilot CLI](copilot-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
 | [Copilot in VS Code](copilot-vscode/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
 | [Kimi Code CLI](kimi-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Codex Desktop App](codex-gui/) | GUI | experimental (secondary-user AppX launch with owner and session checks; real Windows E2E required) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
+| [Codex Desktop App](codex-gui/) | GUI | supported (owned Windows user and Store AppX activation) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
 | [Grok Build CLI](grok-cli/) | CLI/TUI | supported (process token via `multi-cli auth set`) | supported | supported |
 
 לכל כלי תיקייה משלו בשורש המאגר עם קובץ `adapter.json` שמתאר את גבול החשבון, את המצב הרגיל המשותף ואת הראיות הנדרשות לקידום לסטטוס מאומת.

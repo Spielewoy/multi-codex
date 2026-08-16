@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# multi-cli -- Run multiple sandboxed profiles of supported CLIs, IDEs, and GUI apps.
+# multi-cli -- Run multiple sandboxed profiles of any supported AI CLI or IDE.
 #
 # Adapter-driven launcher: each supported tool ships an adapter.json describing
 # how to find its binary and how to isolate its state. multi-cli reads the
@@ -1602,7 +1602,7 @@ cmd_import() {
 
 cmd_help() {
   cat <<HELP
-multi-cli $VERSION -- sandboxed profiles for CLIs, IDEs, and GUI apps
+multi-cli $VERSION -- sandboxed profiles for AI CLIs and agent IDEs
 
 USAGE
   multi-cli <command> [args]

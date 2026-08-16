@@ -5,7 +5,7 @@ Schema-v2 adapters describe an account boundary separately from the tool's norma
 ## Required contracts
 
 - `schemaVersion: 2`
-- `id`, `displayName`, `kind` (`cli`, `ide`, `gui`, or `hybrid`)
+- `id`, `displayName`, `kind`
 - `binary.windows|macos|linux`
 - `isolation.strategy: accountOverlay`
 - `isolation.mode: foreground|detached`
@@ -13,7 +13,6 @@ Schema-v2 adapters describe an account boundary separately from the tool's norma
 - `normalState.root`, `sharedPaths`, `sessionPaths`, `filePaths`, `unsafePaths`
 - `concurrency.level`, `singletonScope`
 - `support.windows|macos|linux`
-- optional `appx` with `packageName`, `applicationId`, and optional `storeProductId`; it requires `osUserCredentialStore`, detached mode, and a matching `appx:<packageName>` Windows binary
 
 ## Account mechanisms
 
@@ -24,13 +23,12 @@ Schema-v2 adapters describe an account boundary separately from the tool's norma
 
 ## Support levels
 
-`support.windows|macos|linux.level` is `supported`, `experimental`, or `unsupported`.
+`support.windows|macos|linux.level` is binary: `supported` or `unsupported`.
 
 - `supported`: multi-cli provides account isolation on that OS through at least one mode. `reason` is optional but encouraged for mode requirements (for example, "OS-user isolation; elevated terminal required").
-- `experimental`: the implementation is available, but the `reason` names the real-system verification still required. `reason` is mandatory.
 - `unsupported`: no isolation mode works on that OS. `reason` is required and must say why.
 
-The retired `verified` level and the `evidenceId` field are rejected by validation.
+The retired `verified`/`experimental` levels and the `evidenceId` field are rejected by validation.
 
 ## Placeholders
 

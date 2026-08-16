@@ -112,7 +112,7 @@ function Test-AdapterFields {
     param([System.Collections.Generic.List[string]]$Errors, $Adapter, [int]$SchemaVersion)
     $allowedTopLevel = @('schemaVersion', 'id', 'displayName', 'kind', 'binary', 'isolation', 'install', 'versionCommand')
     if ($SchemaVersion -eq 1) { $allowedTopLevel += @('share', 'session', 'status') }
-    if ($SchemaVersion -eq 2) { $allowedTopLevel += @('account', 'normalState', 'concurrency', 'support', 'appx') }
+    if ($SchemaVersion -eq 2) { $allowedTopLevel += @('account', 'normalState', 'concurrency', 'support') }
     Test-AdapterObjectFields -Errors $Errors -Object $Adapter -Allowed $allowedTopLevel -Label ''
     $isolation = Get-ObjectProperty -Object $Adapter -Name 'isolation'
     Test-AdapterObjectFields -Errors $Errors -Object $isolation -Allowed @('strategy', 'mode', 'env', 'clearEnv', 'args', 'shareFromRealHome') -Label 'isolation'
@@ -128,7 +128,6 @@ function Test-AdapterFields {
     Test-AdapterObjectFields -Errors $Errors -Object $normalState -Allowed @('root', 'runtimeSubdir', 'sharedPaths', 'sessionPaths', 'filePaths', 'unsafePaths') -Label 'normalState'
     Test-AdapterObjectFields -Errors $Errors -Object (Get-ObjectProperty -Object $normalState -Name 'root') -Allowed @('windows', 'macos', 'linux') -Label 'normalState.root'
     Test-AdapterObjectFields -Errors $Errors -Object (Get-ObjectProperty -Object $Adapter -Name 'concurrency') -Allowed @('level', 'singletonScope') -Label 'concurrency'
-    Test-AdapterObjectFields -Errors $Errors -Object (Get-ObjectProperty -Object $Adapter -Name 'appx') -Allowed @('packageName', 'applicationId', 'storeProductId') -Label 'appx'
     $support = Get-ObjectProperty -Object $Adapter -Name 'support'
     Test-AdapterObjectFields -Errors $Errors -Object $support -Allowed @('windows', 'macos', 'linux') -Label 'support'
     foreach ($platform in @('windows', 'macos', 'linux')) {
@@ -174,8 +173,9 @@ function Test-AdapterBinary {
     }
 }
 
-# Every platform row needs a level. Experimental and unsupported rows require
-# a reason; supported rows may include one for mode requirements.
+# Every platform row needs a level: 'supported' (reason optional, encouraged
+# for mode requirements) or 'unsupported' (reason required). The retired
+# verified/experimental levels are rejected with an explicit message.
 function Test-AdapterSupport {
     param([System.Collections.Generic.List[string]]$Errors, $Support)
     foreach ($platform in @('windows', 'macos', 'linux')) {
@@ -183,20 +183,15 @@ function Test-AdapterSupport {
         $level = Get-ObjectProperty -Object $entry -Name 'level'
         switch ($level) {
             'supported' { }
-            'experimental' {
-                if (-not (Get-ObjectProperty -Object $entry -Name 'reason')) {
-                    Add-AdapterValidationError -Errors $Errors -Message "support.$platform.reason is required for level 'experimental'"
-                }
-            }
             'unsupported' {
                 if (-not (Get-ObjectProperty -Object $entry -Name 'reason')) {
                     Add-AdapterValidationError -Errors $Errors -Message "support.$platform.reason is required for level 'unsupported'"
                 }
             }
-            'verified' {
-                Add-AdapterValidationError -Errors $Errors -Message "support.$platform.level 'verified' was retired; use 'supported', 'experimental', or 'unsupported'"
+            { $_ -eq 'verified' -or $_ -eq 'experimental' } {
+                Add-AdapterValidationError -Errors $Errors -Message "support.$platform.level '$level' was retired; use 'supported' or 'unsupported'"
             }
-            default { Add-AdapterValidationError -Errors $Errors -Message "support.$platform.level must be supported, experimental, or unsupported" }
+            default { Add-AdapterValidationError -Errors $Errors -Message "support.$platform.level must be supported or unsupported" }
         }
     }
 }
@@ -262,28 +257,6 @@ function Test-AdapterV2 {
         default { Add-AdapterValidationError -Errors $Errors -Message "account.mechanism '$mechanism' is not supported" }
     }
 
-    $appx = Get-ObjectProperty -Object $Adapter -Name 'appx'
-    if ($null -ne $appx) {
-        $packageName = Get-ObjectProperty -Object $appx -Name 'packageName'
-        if (-not $packageName) {
-            Add-AdapterValidationError -Errors $Errors -Message 'appx.packageName is required when appx is declared'
-        }
-        if (-not (Get-ObjectProperty -Object $appx -Name 'applicationId')) {
-            Add-AdapterValidationError -Errors $Errors -Message 'appx.applicationId is required when appx is declared'
-        }
-        if ($mechanism -ne 'osUserCredentialStore') {
-            Add-AdapterValidationError -Errors $Errors -Message 'appx requires account.mechanism osUserCredentialStore'
-        }
-        $mode = Get-ObjectProperty -Object (Get-ObjectProperty -Object $Adapter -Name 'isolation') -Name 'mode'
-        if ($mode -ne 'detached') {
-            Add-AdapterValidationError -Errors $Errors -Message 'appx requires isolation.mode detached'
-        }
-        $windowsBinaries = @(Get-ObjectProperty -Object (Get-ObjectProperty -Object $Adapter -Name 'binary') -Name 'windows')
-        if ($packageName -and $windowsBinaries -notcontains "appx:$packageName") {
-            Add-AdapterValidationError -Errors $Errors -Message "binary.windows must contain 'appx:$packageName' when appx is declared"
-        }
-    }
-
     $normalState = Get-ObjectProperty -Object $Adapter -Name 'normalState'
     $root = Get-ObjectProperty -Object $normalState -Name 'root'
     foreach ($platform in @('windows', 'macos', 'linux')) {
@@ -346,10 +319,6 @@ function Test-AdapterManifest {
         if ($null -eq (Get-ObjectProperty -Object $adapter -Name $required)) {
             Add-AdapterValidationError -Errors $errors -Message "$required is required"
         }
-    }
-    $kind = Get-ObjectProperty -Object $adapter -Name 'kind'
-    if ($null -ne $kind -and $kind -notin @('cli', 'ide', 'gui', 'hybrid')) {
-        Add-AdapterValidationError -Errors $errors -Message "kind '$kind' is not one of: cli, ide, gui, hybrid"
     }
 
     $schemaVersion = Get-ObjectProperty -Object $adapter -Name 'schemaVersion'
