@@ -86,6 +86,46 @@ JSON
   [[ "$output" == *"Validated 1 adapter(s)"* ]]
 }
 
+@test "JSON schema accepts the runtime subdirectory used by Command Code" {
+  run jq -e '
+    .properties.normalState.properties.runtimeSubdir["$ref"] == "#/$defs/relativePath"
+  ' "$MULTICLI_REPO_ROOT/schema/adapter.schema.json"
+
+  [ "$status" -eq 0 ]
+}
+
+@test "Windows Bash resolves only AppX OS-user adapters" {
+  local stub_bin="$MULTICLI_SCRATCH/bin"
+  mkdir -p "$stub_bin" "$TOOLS_ROOT/codex-gui"
+  cp "$MULTICLI_REPO_ROOT/codex-gui/adapter.json" "$TOOLS_ROOT/codex-gui/adapter.json"
+  printf '#!/usr/bin/env bash\nprintf "appx:FixtureFamily!App\\n"\n' > "$stub_bin/powershell.exe"
+  chmod +x "$stub_bin/powershell.exe"
+
+  run env PATH="$stub_bin:$PATH" MULTICLI_PLATFORM=windows MULTICLI_TOOLS_DIR="$TOOLS_ROOT" \
+    bash -c 'multicli_bin="$1"; set -- help; source "$multicli_bin" >/dev/null; find_adapter_binary codex-gui' _ "$MULTICLI_BIN"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "appx:FixtureFamily!App" ]
+
+  jq '.account.mechanism = "fileOverlay"' "$TOOLS_ROOT/codex-gui/adapter.json" \
+    > "$TOOLS_ROOT/codex-gui/adapter.tmp"
+  mv "$TOOLS_ROOT/codex-gui/adapter.tmp" "$TOOLS_ROOT/codex-gui/adapter.json"
+
+  run env PATH="$stub_bin:$PATH" MULTICLI_PLATFORM=windows MULTICLI_TOOLS_DIR="$TOOLS_ROOT" \
+    bash -c 'multicli_bin="$1"; set -- help; source "$multicli_bin" >/dev/null; find_adapter_binary codex-gui' _ "$MULTICLI_BIN"
+
+  [ "$status" -ne 0 ]
+
+  jq '.account.mechanism = "osUserCredentialStore" | .binary.windows = ["uri:codex"]' \
+    "$TOOLS_ROOT/codex-gui/adapter.json" > "$TOOLS_ROOT/codex-gui/adapter.tmp"
+  mv "$TOOLS_ROOT/codex-gui/adapter.tmp" "$TOOLS_ROOT/codex-gui/adapter.json"
+
+  run env PATH="$stub_bin:$PATH" MULTICLI_PLATFORM=windows MULTICLI_TOOLS_DIR="$TOOLS_ROOT" \
+    bash -c 'multicli_bin="$1"; set -- help; source "$multicli_bin" >/dev/null; find_adapter_binary codex-gui' _ "$MULTICLI_BIN"
+
+  [ "$status" -ne 0 ]
+}
+
 @test "validator rejects malformed JSON with the adapter path" {
   write_adapter broken '{"id":"broken"'
 

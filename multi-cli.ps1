@@ -96,6 +96,7 @@ function Get-Adapters {
 # Every command that touches adapter data goes through this first.
 function Get-Adapter {
     param([string]$ToolId)
+    Test-ToolId $ToolId
     Import-AdapterValidationModule
     $manifest = Join-Path (Join-Path $ToolsDir $ToolId) 'adapter.json'
     if (-not (Test-Path $manifest)) { throw "Unknown tool '$ToolId'. Run: multi-cli tools" }
@@ -653,7 +654,18 @@ function Split-ProfileSpec {
     if (-not $Spec) { throw "Profile required: <tool>/<name>" }
     if ($Spec -notmatch '/') { throw "Profile must be in form <tool>/<name>. Got: '$Spec'" }
     $parts = $Spec.Split('/', 2)
+    Test-ToolId $parts[0]
     return [pscustomobject]@{ Tool = $parts[0]; Name = $parts[1] }
+}
+
+# Throw unless $ToolId is a safe adapter id: alnum start, then alnum or
+# hyphen. This blocks traversal before adapter/profile paths are joined.
+function Test-ToolId {
+    param([string]$ToolId)
+    if ([string]::IsNullOrWhiteSpace($ToolId)) { throw 'Tool id required' }
+    if ($ToolId -notmatch '^[a-zA-Z0-9][a-zA-Z0-9-]*$') {
+        throw "Tool id '$ToolId' invalid: must start with alphanumeric, contain only letters/numbers/hyphens"
+    }
 }
 
 # Throw unless $Name is a safe profile/template name: alnum start, then alnum
@@ -666,10 +678,81 @@ function Test-ProfileName {
     }
 }
 
-function Get-ProfileDir { param([string]$Tool,[string]$Name) Join-Path (Join-Path $BASE $Tool) $Name }
-function Get-ToolProfilesDir { param([string]$Tool) Join-Path $BASE $Tool }
-function Get-AliasDir { Join-Path $BASE 'bin' }
-function Get-TemplatesDir { Join-Path $BASE '.templates' }
+function Get-StorageCanonical {
+    param([string]$Path)
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd('\', '/')
+}
+
+function Test-StoragePathWithin {
+    param([string]$Child, [string]$Root)
+    if (-not $Root) { return $false }
+    $prefix = $Root.TrimEnd('\', '/') + '\'
+    return ($Child.TrimEnd('\', '/') + '\').StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-StorageLinkTarget {
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $null }
+    $linkType = Get-ObjectPropertySafe -Object $item -Name 'LinkType'
+    if ($linkType -ne 'Junction' -and $linkType -ne 'SymbolicLink') { return $null }
+    $target = @((Get-ObjectPropertySafe -Object $item -Name 'Target'))[0]
+    if (-not $target) { return $null }
+    return Get-StorageCanonical -Path $target
+}
+
+function Assert-StoragePathSafe {
+    param([string]$Path, [string]$Label)
+    $baseCanonical = Get-StorageCanonical -Path $BASE
+    $candidateCanonical = Get-StorageCanonical -Path $Path
+    if (-not (Test-StoragePathWithin -Child $candidateCanonical -Root $baseCanonical)) {
+        throw "Refusing to access $Label outside MULTICLI_HOME: '$candidateCanonical'."
+    }
+    if ($candidateCanonical.Length -le $baseCanonical.Length) { return }
+    $relative = $candidateCanonical.Substring($baseCanonical.Length).TrimStart('\', '/')
+    if (-not $relative) { return }
+    $current = $baseCanonical
+    foreach ($segment in ($relative -split '[\\/]')) {
+        if (-not $segment) { continue }
+        $current = Join-Path $current $segment
+        if (-not (Test-Path -LiteralPath $current)) { break }
+        $target = Get-StorageLinkTarget -Path $current
+        if ($null -eq $target) { continue }
+        if (-not (Test-StoragePathWithin -Child $target -Root $baseCanonical)) {
+            throw "Refusing to access $Label because '$current' resolves outside MULTICLI_HOME."
+        }
+    }
+}
+
+function Resolve-StoragePath {
+    param([string]$Label, [string[]]$Segments)
+    $path = $BASE
+    foreach ($segment in @($Segments)) {
+        if ([string]::IsNullOrEmpty($segment)) { continue }
+        $path = Join-Path $path $segment
+    }
+    Assert-StoragePathSafe -Path $path -Label $Label
+    return $path
+}
+
+function Get-ProfileDir {
+    param([string]$Tool,[string]$Name)
+    Test-ToolId $Tool
+    Test-ProfileName $Name
+    return Resolve-StoragePath -Label "profile '$Tool/$Name'" -Segments @($Tool, $Name)
+}
+function Get-ToolProfilesDir {
+    param([string]$Tool)
+    Test-ToolId $Tool
+    return Resolve-StoragePath -Label "profile root for '$Tool'" -Segments @($Tool)
+}
+function Get-AliasDir { Resolve-StoragePath -Label 'alias directory' -Segments @('bin') }
+function Get-TemplatesDir { Resolve-StoragePath -Label 'template root' -Segments @('.templates') }
+
+function Throw-LegacyTransferBlocked {
+    param([string]$Action, [string]$Spec)
+    throw "Cannot $Action '$Spec': legacy profile transfer is disabled because whole-root copies can leak tokens. Migrate the legacy profile first: multi-cli migrate $Spec"
+}
 
 # =============================================================================
 # Profile CRUD
@@ -1552,16 +1635,7 @@ function Invoke-Template {
                 Write-Host "Saved template '$B' from '$A'"
                 return
             }
-            $tplDir = Get-TemplatesDir
-            New-Item -ItemType Directory -Force -Path $tplDir | Out-Null
-            $dest = Join-Path $tplDir $B
-            if (Test-Path $dest) { throw "Template '$B' already exists" }
-            Copy-Item -Path $srcDir -Destination $dest -Recurse
-            foreach ($f in @('.shared', '.cli', '.isolated', 'auth.json', '.credentials.json', 'oauth_creds.json')) {
-                $strip = Join-Path $dest $f
-                if (Test-Path $strip) { Remove-Item -Recurse -Force $strip }
-            }
-            Write-Host "Saved template '$B' from '$A'"
+            Throw-LegacyTransferBlocked -Action 'save a template from' -Spec $A
         }
         'list' {
             $tplDir = Get-TemplatesDir
@@ -1597,8 +1671,7 @@ function Invoke-Export {
         Write-Host "Exported '$Spec' to $OutPath"
         return
     }
-    Compress-Archive -Path $srcDir -DestinationPath $OutPath -Force
-    Write-Host "Exported '$Spec' to $OutPath"
+    Throw-LegacyTransferBlocked -Action 'export' -Spec $Spec
 }
 
 # multi-cli import: schema-v2 archives are validated and re-identified by the

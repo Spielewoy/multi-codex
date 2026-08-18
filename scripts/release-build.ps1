@@ -51,7 +51,7 @@ Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 $paths = @(
-    'LICENSE', 'README.md', 'docs', 'lib', 'schema',
+    'LICENSE', 'README.md', 'assets\banner.svg', 'assets\i18n', 'docs', 'lib', 'schema',
     'agy-cli', 'antigravity', 'claude-cli', 'codex', 'codex-gui', 'commandcode',
     'copilot-cli', 'copilot-vscode', 'cursor', 'cursor-cli', 'gemini-cli', 'grok-cli',
     'kimi-cli', 'kiro', 'opencode', 'windsurf', 'zed',

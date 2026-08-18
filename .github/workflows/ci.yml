@@ -261,3 +261,4 @@ jobs:
         run: |
           bash scripts/release-build.sh --check
           pwsh -NoProfile -File scripts/release-build.ps1 -Check
+          python3 scripts/validate-docs.py

@@ -49,7 +49,9 @@ jobs:
         run: |
           version="$(tr -d '[:space:]' < release/VERSION)"
           tar -tzf "dist/multi-cli-v$version-linux-macos.tar.gz" | grep -Fx "multi-cli-v$version/multi-cli"
+          tar -tzf "dist/multi-cli-v$version-linux-macos.tar.gz" | grep -Fx "multi-cli-v$version/assets/banner.svg"
           unzip -Z1 "dist/multi-cli-v$version-windows.zip" | tr '\\' '/' | grep -Fx "multi-cli-v$version/multi-cli.ps1"
+          unzip -Z1 "dist/multi-cli-v$version-windows.zip" | tr '\\' '/' | grep -Fx "multi-cli-v$version/assets/banner.svg"
           (cd dist && sha256sum --check SHA256SUMS)
 
       - name: Upload release assets

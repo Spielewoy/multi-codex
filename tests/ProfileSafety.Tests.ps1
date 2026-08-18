@@ -255,6 +255,138 @@ function Invoke-ProfileFixtureLauncher {
     return [pscustomobject]@{ ExitCode = $exitCode; Output = ($output | Out-String) }
 }
 
+Describe 'profile path containment and legacy transfer hardening' {
+    It 'rejects a traversal tool id before touching paths outside MULTICLI_HOME' {
+        $scratch = New-ProfileFixtureScratch
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            Copy-Item -LiteralPath (Join-Path $scratch.Tools 'fixture\adapter.json') -Destination (Join-Path $scratch.Root 'adapter.json')
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('new', '../victim', '--no-seed')
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match "Tool id '\.\.' invalid"
+            (Test-Path -LiteralPath (Join-Path $scratch.Root 'victim')) | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses delete when a valid tool directory is a junction outside MULTICLI_HOME' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ("mcli_profile_" + [guid]::NewGuid().ToString('N'))
+        $toolLink = Join-Path $root 'profiles\codex'
+        $outsideRoot = Join-Path $root 'outside-codex'
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $root 'profiles'), (Join-Path $outsideRoot 'account-a') | Out-Null
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Value 'outside-data' -Encoding ASCII
+            New-Item -ItemType Junction -Path $toolLink -Target $outsideRoot | Out-Null
+
+            $delete = Invoke-ProfileLauncher -Root $root -Arguments @('delete', 'codex/account-a') -StdinText 'y'
+
+            $delete.TimedOut | Should Be $false
+            $delete.ExitCode | Should Be 1
+            $delete.Output | Should Match 'outside MULTICLI_HOME'
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Raw).Trim() | Should Be 'outside-data'
+            (Test-Path -LiteralPath (Join-Path $outsideRoot 'account-a')) | Should Be $true
+        } finally {
+            if (Test-Path -LiteralPath $toolLink) { [System.IO.Directory]::Delete($toolLink) }
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses rename when a valid tool directory is a junction outside MULTICLI_HOME' {
+        $scratch = New-ProfileFixtureScratch
+        $toolLink = Join-Path $scratch.Profiles 'fixture'
+        $outsideRoot = Join-Path $scratch.Root 'outside-fixture'
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            New-Item -ItemType Directory -Force -Path (Join-Path $outsideRoot 'account-a') | Out-Null
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Value 'outside-data' -Encoding ASCII
+            New-Item -ItemType Junction -Path $toolLink -Target $outsideRoot | Out-Null
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('rename', 'fixture/account-a', 'fixture/account-b')
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'outside MULTICLI_HOME'
+            (Test-Path -LiteralPath (Join-Path $outsideRoot 'account-a')) | Should Be $true
+            (Test-Path -LiteralPath (Join-Path $outsideRoot 'account-b')) | Should Be $false
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Raw).Trim() | Should Be 'outside-data'
+        } finally {
+            if (Test-Path -LiteralPath $toolLink) { [System.IO.Directory]::Delete($toolLink) }
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses export when a valid tool directory is a junction outside MULTICLI_HOME' {
+        $scratch = New-ProfileFixtureScratch
+        $toolLink = Join-Path $scratch.Profiles 'fixture'
+        $outsideRoot = Join-Path $scratch.Root 'outside-fixture'
+        $archive = Join-Path $scratch.Root 'escape.zip'
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            New-Item -ItemType Directory -Force -Path (Join-Path $outsideRoot 'account-a') | Out-Null
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Value 'outside-data' -Encoding ASCII
+            New-Item -ItemType Junction -Path $toolLink -Target $outsideRoot | Out-Null
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('export', 'fixture/account-a', $archive)
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'outside MULTICLI_HOME'
+            (Test-Path -LiteralPath $archive) | Should Be $false
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Raw).Trim() | Should Be 'outside-data'
+        } finally {
+            if (Test-Path -LiteralPath $toolLink) { [System.IO.Directory]::Delete($toolLink) }
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses template save for legacy whole-root profiles before any token files can travel' {
+        $scratch = New-ProfileFixtureScratch
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            $legacy = Join-Path $scratch.Profiles 'fixture\legacy'
+            New-Item -ItemType Directory -Force -Path $legacy | Out-Null
+            Set-Content -LiteralPath (Join-Path $legacy 'config.toml') -Value 'model = "gpt-5"' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $legacy 'mcp-oauth-tokens.json') -Value '{"access_token":"tok"}' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $legacy 'a2a-oauth-tokens.json') -Value '{"refresh_token":"tok"}' -Encoding ASCII
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('template', 'save', 'fixture/legacy', 'tpl')
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'legacy profile'
+            $result.Output | Should Match 'multi-cli migrate fixture/legacy'
+            (Test-Path -LiteralPath (Join-Path $scratch.Profiles '.templates\tpl')) | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses export for legacy whole-root profiles before any token files can travel' {
+        $scratch = New-ProfileFixtureScratch
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            $legacy = Join-Path $scratch.Profiles 'fixture\legacy'
+            $archive = Join-Path $scratch.Root 'legacy.zip'
+            New-Item -ItemType Directory -Force -Path $legacy | Out-Null
+            Set-Content -LiteralPath (Join-Path $legacy 'config.toml') -Value 'model = "gpt-5"' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $legacy 'mcp-oauth-tokens.json') -Value '{"access_token":"tok"}' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $legacy 'a2a-oauth-tokens.json') -Value '{"refresh_token":"tok"}' -Encoding ASCII
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('export', 'fixture/legacy', $archive)
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'legacy profile'
+            $result.Output | Should Match 'multi-cli migrate fixture/legacy'
+            (Test-Path -LiteralPath $archive) | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'restored launcher behaviors' {
     It 'propagates a foreground child exit code as the launcher exit code' {
         $scratch = New-ProfileFixtureScratch

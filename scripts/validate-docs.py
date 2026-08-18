@@ -18,6 +18,7 @@ TRANSLATION_FILES = (
     "docs/translations/ru.md",
     "docs/translations/he.md",
 )
+ADAPTER_GUIDE_DIR = REPO_ROOT / "docs" / "adapters"
 DEFAULT_PROFILE_DESCRIPTIONS = {
     "README.md": "Create an account profile (credentials separate; normal state shared)",
 }
@@ -109,16 +110,19 @@ def main() -> int:
     for file_name in TRANSLATION_FILES:
         path = REPO_ROOT / file_name
         errors.extend(validate_local_links(path))
-    for path in REPO_ROOT.glob("README.*.md"):
-        errors.extend(validate_local_links(path))
-    for path in REPO_ROOT.glob("*/README.md"):
+    adapter_guides = sorted(ADAPTER_GUIDE_DIR.glob("*.md"))
+    for path in adapter_guides:
         errors.extend(validate_local_links(path))
         if RETIRED_SUPPORT_TERMS.search(path.read_text(encoding="utf-8")):
             errors.append(f"{path.relative_to(REPO_ROOT)}: contains retired support wording")
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    print(f"Validated {len(README_FILES)} main README(s), {len(TRANSLATION_FILES)} translation(s), and {len(adapters)} adapter support rows.")
+    print(
+        f"Validated {len(README_FILES)} main README, "
+        f"{len(TRANSLATION_FILES)} translations, {len(adapter_guides)} adapter guides, "
+        f"and {len(adapters)} adapter support rows."
+    )
     return 0
 
 
