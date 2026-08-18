@@ -16,8 +16,8 @@ if ($ExpectedVersion -and $version -ne $ExpectedVersion) {
     throw "Expected version $ExpectedVersion, found $version."
 }
 
-$bashSource = Get-Content -LiteralPath (Join-Path $root 'multi-cli') -Raw
-$powershellSource = Get-Content -LiteralPath (Join-Path $root 'multi-cli.ps1') -Raw
+$bashSource = (Get-Content -LiteralPath (Join-Path $root 'multi-cli') -Raw) -replace "`r", ''
+$powershellSource = (Get-Content -LiteralPath (Join-Path $root 'multi-cli.ps1') -Raw) -replace "`r", ''
 if ($bashSource -notmatch "(?m)^VERSION=`"$([regex]::Escape($version))`"$") {
     throw "multi-cli does not embed version $version."
 }
