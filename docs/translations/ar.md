@@ -86,7 +86,7 @@ multi-cli launch claude-cli/work
 multi-cli claude-cli/work
 ```
 
-تبقى بيانات الاعتماد داخل ملف التعريف افتراضيًا، بينما تظل الإعدادات والمحادثات والوكلاء والمهارات والإضافات المدعومة مشتركة. أضف `--isolated` عندما تريد فصل المجلد الرئيسي للأداة بالكامل.
+تبقى بيانات الاعتماد داخل ملف التعريف افتراضيًا، بينما تظل الإعدادات والمحادثات والوكلاء والمهارات والإضافات المدعومة مشتركة. استخدم `--isolated` فقط مع المحولات التي تدعم عزل المجلد بالكامل. ترفضه المحولات المعتمدة على مستخدم نظام التشغيل لأن إعادة توجيه المجلد لا تعزل مخزن بيانات اعتماد ثابتًا في النظام.
 
 <a id="supported-tools"></a>
 
@@ -107,9 +107,9 @@ multi-cli claude-cli/work
 | Gemini CLI | `gemini-cli` | Windows وmacOS وLinux | تراكب الملفات |
 | Grok Build CLI | `grok-cli` | Windows وmacOS وLinux | سر العملية |
 | Kimi Code CLI | `kimi-cli` | Windows وmacOS وLinux | سر العملية |
-| Kiro | `kiro` | Windows وmacOS وLinux | مستخدم نظام التشغيل أو مجلد رئيسي معزول |
+| Kiro | `kiro` | Windows وmacOS وLinux | مستخدم نظام التشغيل |
 | OpenCode | `opencode` | Windows وmacOS وLinux | مجلد رئيسي معزول للأداة |
-| Windsurf | `windsurf` | Windows وmacOS وLinux | مستخدم نظام التشغيل أو مجلد رئيسي معزول |
+| Windsurf | `windsurf` | Windows وmacOS وLinux | مستخدم نظام التشغيل |
 | Zed | `zed` | Windows | مستخدم نظام التشغيل |
 
 توجد متطلبات المنصات والقيود المعروفة في [مصفوفة الدعم](../support-matrix.md). شغّل `multi-cli tools` لمعرفة الأدوات المتاحة على جهازك.
@@ -123,12 +123,12 @@ multi-cli claude-cli/work
 | الأمر | الإجراء |
 |---|---|
 | `multi-cli new <tool>/<name>` | إنشاء ملف تعريف ببيانات اعتماد منفصلة وحالة عادية مشتركة |
-| `multi-cli new <tool>/<name> --isolated` | إنشاء ملف تعريف يعزل المجلد الرئيسي بالكامل؛ الأسماء البديلة: `--isolate` و`-i` |
-| `multi-cli new <tool>/<name> --from <template>` | إنشاء ملف تعريف من قالب محفوظ |
+| `multi-cli new <tool>/<name> --isolated` | إنشاء ملف تعريف يعزل المجلد بالكامل عندما يدعم المحول ذلك؛ الأسماء البديلة: `--isolate` و`-i` |
+| `multi-cli new <tool>/<name> --from <template>` | إنشاء ملف تعريف بالمخطط v2 من قالب بالمخطط v2 |
 | `multi-cli <tool>/<name>` | تشغيل ملف تعريف |
 | `multi-cli launch <tool>/<name> [-- args...]` | تشغيل الأداة وتمرير الوسائط إليها |
 | `multi-cli list [<tool>]` | عرض ملفات التعريف |
-| `multi-cli clone <tool>/<src> <tool>/<dest>` | نسخ ملف تعريف |
+| `multi-cli clone <tool>/<src> <tool>/<dest>` | نسخ ملف تعريف بالمخطط v2 |
 | `multi-cli rename <tool>/<old> <tool>/<new>` | إعادة تسمية ملف تعريف |
 | `multi-cli delete <tool>/<name>` | حذف ملف تعريف بعد التأكيد |
 
@@ -140,10 +140,10 @@ multi-cli claude-cli/work
 | `multi-cli auth status <tool>/<profile>` | التحقق من وجود السر |
 | `multi-cli auth clear <tool>/<profile>` | حذف السر |
 | `multi-cli continue <tool> <src> <dest> [--dry-run] [--no-merge]` | نسخ حالة الجلسة المدعومة دون نسخ بيانات الاعتماد |
-| `multi-cli template save <tool>/<profile> <name>` | حفظ قالب خالٍ من بيانات الاعتماد |
+| `multi-cli template save <tool>/<profile> <name>` | حفظ قالب بالمخطط v2 خالٍ من بيانات الاعتماد |
 | `multi-cli template list \| delete <name>` | عرض القوالب أو حذفها |
-| `multi-cli export <tool>/<name> [path]` | تصدير ملف تعريف |
-| `multi-cli import <archive> <tool>/<name>` | استيراد ملف تعريف |
+| `multi-cli export <tool>/<name> [path]` | تصدير ملف تعريف بالمخطط v2 |
+| `multi-cli import <archive> <tool>/<name>` | استيراد أرشيف بالمخطط v2 |
 
 ### الصيانة
 
@@ -168,7 +168,7 @@ multi-cli claude-cli/work
 | مستخدم نظام التشغيل | هوية بيانات الاعتماد الثابتة للمنتج | لا شيء ما لم يحدد المحوّل غير ذلك |
 | مجلد رئيسي معزول للأداة | المجلد الرئيسي للأداة بالكامل | لا شيء |
 
-تستخدم ملفات تعريف الحساب أضيق حد آمن. ينشئ `--isolated` مجلدًا رئيسيًا منفصلًا للأداة ولا يشارك شيئًا. تستخدم المنتجات المرتبطة بهوية ثابتة لبيانات اعتماد نظام التشغيل مستخدم Windows يديره Multi-CLI، وتتطلب طرفية بصلاحيات مرتفعة.
+تستخدم ملفات تعريف الحساب أضيق حد آمن. ينشئ `--isolated` مجلدًا منفصلًا ولا يشارك شيئًا، لكنه يعمل فقط مع المحولات التي تدعم عزل المجلد بالكامل. ترفضه المحولات المعتمدة على مستخدم نظام التشغيل لأن إعادة توجيه المجلد لا تعزل مخزن بيانات اعتماد ثابتًا. تستخدم المنتجات المرتبطة بهذه الهوية مستخدم نظام تشغيل يديره Multi-CLI؛ ويتطلب Windows طرفية بصلاحيات مرتفعة.
 
 تحتاج المحوّلات التي تستخدم سر العملية إلى خطوة إضافية قبل التشغيل:
 
@@ -183,6 +183,8 @@ multi-cli cursor-cli/work
 ```bash
 multi-cli migrate codex/work --dry-run
 ```
+
+لا يمكن نقل إلا ملفات التعريف والقوالب والأرشيفات التي تستخدم المخطط v2. رحل ملف التعريف القديم المصدر أولًا قبل نسخه أو إنشاء قالب أو تصدير جديد منه.
 
 <a id="move-sessions-between-accounts"></a>
 

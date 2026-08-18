@@ -17,9 +17,9 @@ Multi-CLI ships 17 adapters. Each guide covers installation, account isolation, 
 | [`gemini-cli`](gemini-cli.md) | Gemini CLI | CLI | File overlay | [JSON](../../gemini-cli/adapter.json) |
 | [`grok-cli`](grok-cli.md) | Grok Build CLI | CLI | Process token | [JSON](../../grok-cli/adapter.json) |
 | [`kimi-cli`](kimi-cli.md) | Kimi Code CLI | CLI | Process token | [JSON](../../kimi-cli/adapter.json) |
-| [`kiro`](kiro.md) | Kiro IDE | IDE | OS user or whole root | [JSON](../../kiro/adapter.json) |
+| [`kiro`](kiro.md) | Kiro IDE | IDE | OS user | [JSON](../../kiro/adapter.json) |
 | [`opencode`](opencode.md) | OpenCode | CLI | Whole-root only | [JSON](../../opencode/adapter.json) |
-| [`windsurf`](windsurf.md) | Devin Desktop (Windsurf) | IDE | OS user or whole root | [JSON](../../windsurf/adapter.json) |
+| [`windsurf`](windsurf.md) | Devin Desktop (Windsurf) | IDE | OS user | [JSON](../../windsurf/adapter.json) |
 | [`zed`](zed.md) | Zed | IDE | OS user | [JSON](../../zed/adapter.json) |
 
 See the [support matrix](../support-matrix.md) for operating-system requirements and [adapter schema](../adapter-schema.md) for manifest fields.

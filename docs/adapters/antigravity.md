@@ -36,6 +36,7 @@ None claimed yet. Native roots: `%APPDATA%\Antigravity IDE` (Windows), `~/Librar
 ## Known limitations
 
 - The fixed keychain identity makes same-OS-user dual accounts impossible. Windows owned-user isolation is supported; macOS and Linux remain unsupported.
+- `--isolated` is rejected because folder redirection cannot isolate the fixed OS credential store.
 - No normal state is shared until database tracing proves which paths are credential-free.
 - Authenticated GUI testing requires two test accounts; the runtime and cleanup paths are covered by platform tests.
 

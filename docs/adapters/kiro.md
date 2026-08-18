@@ -1,6 +1,6 @@
 # kiro: Kiro IDE
 
-**Account boundary:** `osUserCredentialStore`: Kiro's browser/IAM sign-in has no per-profile credential namespace, so shared profiles use an owned OS user. `--isolated` is also available for a whole-root profile.
+**Account boundary:** `osUserCredentialStore`: Kiro's browser/IAM sign-in has no per-profile credential namespace, so profiles use an owned OS user.
 
 Kiro is an agentic IDE. No IDE-internal credential file or keychain namespace is documented as profile-safe, so multi-cli does not claim one.
 
@@ -10,17 +10,10 @@ Kiro is an agentic IDE. No IDE-internal credential file or keychain namespace is
 
 ## Quickstart
 
-Windows account profiles use an owned OS user:
+Profiles use an owned OS user:
 
 ```bash
 multi-cli new kiro/work
-multi-cli launch kiro/work
-```
-
-macOS and Linux can use an owned OS user with `sudo`, or a whole-root profile:
-
-```bash
-multi-cli new kiro/work --isolated
 multi-cli launch kiro/work
 ```
 
@@ -38,9 +31,10 @@ None claimed yet. The native root (`%USERPROFILE%\.kiro` on Windows, `~/.kiro` o
 
 - Safe shared-state paths are intentionally empty until vendor tracing proves they are credential-free.
 - Owned OS-user profiles require administrator access on Windows and `sudo` on macOS/Linux.
+- `--isolated` is rejected because folder redirection cannot isolate the fixed OS credential store.
 
 ## Support
 
 | Windows | macOS | Linux |
 |---|---|---|
-| supported (owned OS user; elevated terminal, or `--isolated`) | supported (owned OS user with `sudo`, or `--isolated`) | supported (owned OS user with `sudo` and `acl`, or `--isolated`) |
+| supported (owned OS user; elevated terminal) | supported (owned OS user with `sudo`) | supported (owned OS user with `sudo` and `acl`) |

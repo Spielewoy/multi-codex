@@ -662,16 +662,20 @@ cmd_new() {
 
   split_profile_spec "$spec"
   validate_name "$NAME"
-  local apath pdir strategy
+  local apath pdir strategy mechanism
   apath="$(adapter_path "$TOOL")"
   assert_adapter_valid "$TOOL"
   pdir="$(profile_dir "$TOOL" "$NAME")"
   strategy="$(json_str '.isolation.strategy' "$apath")"
+  mechanism="$(json_str '.account.mechanism' "$apath")"
 
   [ "$shared" = true ] && [ "$isolated" = true ] && \
     abort "--shared and --isolated are mutually exclusive: choose one profile mode."
   if [ "$isolated" = true ] && [ "$strategy" != "accountOverlay" ]; then
     abort "--isolated applies to schema-v2 (accountOverlay) adapters; '$TOOL' uses '$strategy', which already isolates the whole root per profile."
+  fi
+  if [ "$isolated" = true ] && [ "$mechanism" = "osUserCredentialStore" ]; then
+    abort "Adapter '$TOOL' cannot use --isolated because folder redirection does not isolate the OS credential store."
   fi
 
   [ -d "$pdir" ] && abort "Profile '$spec' already exists"

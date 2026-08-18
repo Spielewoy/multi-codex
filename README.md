@@ -80,7 +80,7 @@ multi-cli launch claude-cli/work
 multi-cli claude-cli/work
 ```
 
-By default, credentials stay inside the profile while supported settings, conversations, agents, skills, and plugins remain shared. Add `--isolated` when the whole tool home must be separate.
+By default, credentials stay inside the profile while supported settings, conversations, agents, skills, and plugins remain shared. Use `--isolated` only with adapters that support whole-root isolation. OS-user adapters reject it because a redirected folder cannot isolate a fixed OS credential store.
 
 ## Supported tools
 
@@ -99,9 +99,9 @@ By default, credentials stay inside the profile while supported settings, conver
 | Gemini CLI | `gemini-cli` | Windows, macOS, Linux | File overlay |
 | Grok Build CLI | `grok-cli` | Windows, macOS, Linux | Process secret |
 | Kimi Code CLI | `kimi-cli` | Windows, macOS, Linux | Process secret |
-| Kiro | `kiro` | Windows, macOS, Linux | OS user or isolated tool home |
+| Kiro | `kiro` | Windows, macOS, Linux | OS user |
 | OpenCode | `opencode` | Windows, macOS, Linux | Isolated tool home |
-| Windsurf | `windsurf` | Windows, macOS, Linux | OS user or isolated tool home |
+| Windsurf | `windsurf` | Windows, macOS, Linux | OS user |
 | Zed | `zed` | Windows | OS user |
 
 Platform requirements and known limits are documented in the [support matrix](docs/support-matrix.md). Run `multi-cli tools` to see what is available on your machine.
@@ -113,12 +113,12 @@ Platform requirements and known limits are documented in the [support matrix](do
 | Command | Action |
 |---|---|
 | `multi-cli new <tool>/<name>` | Create an account profile (credentials separate; normal state shared) |
-| `multi-cli new <tool>/<name> --isolated` | Create a whole-root isolated profile; aliases: `--isolate`, `-i` |
-| `multi-cli new <tool>/<name> --from <template>` | Create a profile from a saved template |
+| `multi-cli new <tool>/<name> --isolated` | Create a whole-root isolated profile when the adapter supports it; aliases: `--isolate`, `-i` |
+| `multi-cli new <tool>/<name> --from <template>` | Create a schema-v2 profile from a schema-v2 template |
 | `multi-cli <tool>/<name>` | Launch a profile |
 | `multi-cli launch <tool>/<name> [-- args...]` | Launch and pass arguments to the tool |
 | `multi-cli list [<tool>]` | List profiles |
-| `multi-cli clone <tool>/<src> <tool>/<dest>` | Copy a profile |
+| `multi-cli clone <tool>/<src> <tool>/<dest>` | Copy a schema-v2 profile |
 | `multi-cli rename <tool>/<old> <tool>/<new>` | Rename a profile |
 | `multi-cli delete <tool>/<name>` | Delete a profile after confirmation |
 
@@ -130,10 +130,10 @@ Platform requirements and known limits are documented in the [support matrix](do
 | `multi-cli auth status <tool>/<profile>` | Check whether that secret exists |
 | `multi-cli auth clear <tool>/<profile>` | Remove that secret |
 | `multi-cli continue <tool> <src> <dest> [--dry-run] [--no-merge]` | Copy supported session state, never credentials |
-| `multi-cli template save <tool>/<profile> <name>` | Save a credential-free template |
+| `multi-cli template save <tool>/<profile> <name>` | Save a credential-free schema-v2 template |
 | `multi-cli template list \| delete <name>` | List or delete templates |
-| `multi-cli export <tool>/<name> [path]` | Export a profile |
-| `multi-cli import <archive> <tool>/<name>` | Import a profile |
+| `multi-cli export <tool>/<name> [path]` | Export a schema-v2 profile |
+| `multi-cli import <archive> <tool>/<name>` | Import a schema-v2 archive |
 
 ### Maintenance
 
@@ -156,7 +156,7 @@ Platform requirements and known limits are documented in the [support matrix](do
 | OS user | The product's fixed OS credential identity | Nothing unless the adapter declares it |
 | Isolated tool home | The entire tool home | Nothing |
 
-Account profiles use the narrowest safe boundary. `--isolated` uses a separate tool home and shares nothing. Products tied to a fixed OS credential identity use a Multi-CLI-owned Windows user and require an elevated terminal.
+Account profiles use the narrowest safe boundary. `--isolated` uses a separate tool home and shares nothing, but only for adapters that declare whole-root support. OS-user adapters reject it because folder redirection cannot isolate a fixed OS credential store. Products tied to that identity use a Multi-CLI-owned OS user; Windows requires an elevated terminal.
 
 Process-secret adapters require one extra step before launch:
 
@@ -171,6 +171,8 @@ Profiles created by earlier Multi-CLI versions keep their original whole-root be
 ```bash
 multi-cli migrate codex/work --dry-run
 ```
+
+Only schema-v2 profiles, templates, and archives are portable. Migrate a legacy source profile before cloning it or creating a new template or export.
 
 ## Move sessions between accounts
 

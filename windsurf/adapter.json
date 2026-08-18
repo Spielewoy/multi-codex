@@ -29,8 +29,8 @@
   "concurrency": { "level": "singleWriter", "singletonScope": "unknown" },
   "support": {
     "windows": { "level": "supported", "reason": "OS-user isolation; elevated terminal required" },
-    "macos": { "level": "supported", "reason": "OS-user isolation with sudo, or --isolated whole-root" },
-    "linux": { "level": "supported", "reason": "OS-user isolation with sudo and acl, or --isolated whole-root" }
+    "macos": { "level": "supported", "reason": "OS-user isolation with sudo" },
+    "linux": { "level": "supported", "reason": "OS-user isolation with sudo and acl" }
   },
   "install": "https://docs.devin.ai/desktop/getting-started",
   "versionCommand": ["--version"]

@@ -20,9 +20,9 @@
   },
   "concurrency": { "level": "singleWriter", "singletonScope": "osUser" },
   "support": {
-    "windows": { "level": "supported", "reason": "OS-user isolation for concurrent IDE accounts; --isolated also separates ~/.aws/sso token" },
-    "macos": { "level": "supported", "reason": "OS-user isolation with sudo, or --isolated whole-root" },
-    "linux": { "level": "supported", "reason": "OS-user isolation with sudo and acl, or --isolated whole-root" }
+    "windows": { "level": "supported", "reason": "OS-user isolation for concurrent IDE accounts; elevated terminal required" },
+    "macos": { "level": "supported", "reason": "OS-user isolation with sudo" },
+    "linux": { "level": "supported", "reason": "OS-user isolation with sudo and acl" }
   },
   "install": "https://kiro.dev/docs/getting-started/installation/",
   "versionCommand": ["--version"]

@@ -35,6 +35,7 @@ None claimed. `User/globalStorage/` and `User/workspaceStorage/` under the VS Co
 
 - Editor and Copilot ordinary state are intentionally not split; nothing is shared.
 - OS-user profiles require administrator access on Windows. macOS and Linux are not advertised as supported.
+- `--isolated` is rejected because folder redirection cannot isolate the fixed OS credential store.
 
 ## Support
 

@@ -84,7 +84,7 @@ multi-cli launch claude-cli/work
 multi-cli claude-cli/work
 ```
 
-De forma predeterminada, las credenciales quedan dentro del perfil mientras se comparten los ajustes, conversaciones, agentes, habilidades y complementos compatibles. Añade `--isolated` cuando debas separar todo el directorio de la herramienta.
+De forma predeterminada, las credenciales quedan dentro del perfil mientras se comparten los ajustes, conversaciones, agentes, habilidades y complementos compatibles. Usa `--isolated` solo con adaptadores que admitan el aislamiento de todo el directorio. Los adaptadores basados en usuarios del sistema lo rechazan porque redirigir una carpeta no aísla un almacén fijo de credenciales del sistema.
 
 <a id="supported-tools"></a>
 
@@ -105,9 +105,9 @@ De forma predeterminada, las credenciales quedan dentro del perfil mientras se c
 | Gemini CLI | `gemini-cli` | Windows, macOS, Linux | Superposición de archivos |
 | Grok Build CLI | `grok-cli` | Windows, macOS, Linux | Secreto de proceso |
 | Kimi Code CLI | `kimi-cli` | Windows, macOS, Linux | Secreto de proceso |
-| Kiro | `kiro` | Windows, macOS, Linux | Usuario del sistema operativo o directorio aislado |
+| Kiro | `kiro` | Windows, macOS, Linux | Usuario del sistema operativo |
 | OpenCode | `opencode` | Windows, macOS, Linux | Directorio aislado de la herramienta |
-| Windsurf | `windsurf` | Windows, macOS, Linux | Usuario del sistema operativo o directorio aislado |
+| Windsurf | `windsurf` | Windows, macOS, Linux | Usuario del sistema operativo |
 | Zed | `zed` | Windows | Usuario del sistema operativo |
 
 Los requisitos de cada plataforma y las limitaciones conocidas están en la [matriz de compatibilidad](../support-matrix.md). Ejecuta `multi-cli tools` para ver qué está disponible en tu equipo.
@@ -121,12 +121,12 @@ Los requisitos de cada plataforma y las limitaciones conocidas están en la [mat
 | Comando | Acción |
 |---|---|
 | `multi-cli new <tool>/<name>` | Crear un perfil de cuenta con credenciales separadas y estado normal compartido |
-| `multi-cli new <tool>/<name> --isolated` | Crear un perfil con todo el directorio aislado; alias: `--isolate`, `-i` |
-| `multi-cli new <tool>/<name> --from <template>` | Crear un perfil desde una plantilla guardada |
+| `multi-cli new <tool>/<name> --isolated` | Crear un perfil con todo el directorio aislado si el adaptador lo admite; alias: `--isolate`, `-i` |
+| `multi-cli new <tool>/<name> --from <template>` | Crear un perfil con esquema v2 desde una plantilla con esquema v2 |
 | `multi-cli <tool>/<name>` | Iniciar un perfil |
 | `multi-cli launch <tool>/<name> [-- args...]` | Iniciar y pasar argumentos a la herramienta |
 | `multi-cli list [<tool>]` | Enumerar perfiles |
-| `multi-cli clone <tool>/<src> <tool>/<dest>` | Copiar un perfil |
+| `multi-cli clone <tool>/<src> <tool>/<dest>` | Copiar un perfil con esquema v2 |
 | `multi-cli rename <tool>/<old> <tool>/<new>` | Cambiar el nombre de un perfil |
 | `multi-cli delete <tool>/<name>` | Eliminar un perfil tras confirmar |
 
@@ -138,10 +138,10 @@ Los requisitos de cada plataforma y las limitaciones conocidas están en la [mat
 | `multi-cli auth status <tool>/<profile>` | Comprobar si existe el secreto |
 | `multi-cli auth clear <tool>/<profile>` | Eliminar el secreto |
 | `multi-cli continue <tool> <src> <dest> [--dry-run] [--no-merge]` | Copiar el estado de sesión compatible, nunca las credenciales |
-| `multi-cli template save <tool>/<profile> <name>` | Guardar una plantilla sin credenciales |
+| `multi-cli template save <tool>/<profile> <name>` | Guardar una plantilla con esquema v2 sin credenciales |
 | `multi-cli template list \| delete <name>` | Enumerar o eliminar plantillas |
-| `multi-cli export <tool>/<name> [path]` | Exportar un perfil |
-| `multi-cli import <archive> <tool>/<name>` | Importar un perfil |
+| `multi-cli export <tool>/<name> [path]` | Exportar un perfil con esquema v2 |
+| `multi-cli import <archive> <tool>/<name>` | Importar un archivo con esquema v2 |
 
 ### Mantenimiento
 
@@ -166,7 +166,7 @@ Los requisitos de cada plataforma y las limitaciones conocidas están en la [mat
 | Usuario del sistema operativo | La identidad de credenciales fija del producto | Nada, salvo que el adaptador lo indique |
 | Directorio aislado de la herramienta | Todo el directorio de la herramienta | Nada |
 
-Los perfiles usan el límite seguro más estrecho. `--isolated` crea un directorio separado para la herramienta y no comparte nada. Los productos ligados a una identidad de credenciales fija usan un usuario de Windows administrado por Multi-CLI y requieren una terminal con privilegios elevados.
+Los perfiles usan el límite seguro más estrecho. `--isolated` crea un directorio separado y no comparte nada, pero solo funciona con adaptadores que admiten el aislamiento de todo el directorio. Los adaptadores basados en usuarios del sistema lo rechazan porque redirigir una carpeta no aísla un almacén fijo de credenciales. Los productos ligados a esa identidad usan un usuario del sistema administrado por Multi-CLI; Windows requiere una terminal con privilegios elevados.
 
 Los adaptadores con secreto de proceso requieren un paso adicional antes de iniciarlos:
 
@@ -181,6 +181,8 @@ Los perfiles creados por versiones anteriores de Multi-CLI conservan su aislamie
 ```bash
 multi-cli migrate codex/work --dry-run
 ```
+
+Solo los perfiles, plantillas y archivos con esquema v2 son portables. Migra primero un perfil antiguo antes de clonarlo o crear una plantilla o exportación nueva.
 
 <a id="move-sessions-between-accounts"></a>
 

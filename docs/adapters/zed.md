@@ -36,6 +36,7 @@ The `db/` directory (SQLite) is declared unsafe and is never shared until dual-p
 ## Known limitations
 
 - Same-channel singleton behavior requires separate OS users for concurrent Windows windows; macOS/Linux owned-user GUI sessions are not yet supported.
+- `--isolated` is rejected because folder redirection cannot isolate the fixed OS credential store.
 - The `db/` tree is never shared across profiles.
 
 ## Support

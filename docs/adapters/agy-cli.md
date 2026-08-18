@@ -37,6 +37,7 @@ Shared root: `%USERPROFILE%\.gemini\antigravity-cli` (Windows), `~/.gemini/antig
 ## Known limitations
 
 - OS-user profiles require administrator access on Windows. macOS and Linux are not advertised as supported.
+- `--isolated` is rejected because folder redirection cannot isolate the fixed OS credential store.
 - Authenticated `agy` dual-account testing requires two test accounts; the runtime and cleanup paths are covered by platform tests.
 
 ## Support

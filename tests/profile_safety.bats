@@ -197,7 +197,16 @@ make_junction() {
   mkdir -p "$archive_root"
   printf 'model = "gpt-5"\n' > "$archive_root/config.toml"
   printf '{"access_token":"tok"}\n' > "$archive_root/auth.json"
-  powershell.exe -NoProfile -Command "Compress-Archive -Path '$(cygpath -w "$archive_root")\\*' -DestinationPath '$(cygpath -w "$archive")' -Force" >/dev/null
+  python3 - "$archive_root" "$archive" <<'PY'
+import pathlib
+import sys
+import zipfile
+
+root = pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(sys.argv[2], "w") as archive:
+    for path in sorted(root.iterdir()):
+        archive.write(path, path.name)
+PY
 
   run multicli import "$archive" legacycli/work
 

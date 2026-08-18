@@ -84,7 +84,7 @@ multi-cli launch claude-cli/work
 multi-cli claude-cli/work
 ```
 
-默认情况下，凭据保留在配置文件内，而受支持的设置、对话、代理、技能和插件保持共享。需要隔离整个工具主目录时，请添加 `--isolated`。
+默认情况下，凭据保留在配置文件内，而受支持的设置、对话、代理、技能和插件保持共享。仅对支持整个目录隔离的适配器使用 `--isolated`。基于操作系统用户的适配器会拒绝该选项，因为重定向文件夹无法隔离固定的系统凭据存储。
 
 <a id="supported-tools"></a>
 
@@ -105,9 +105,9 @@ multi-cli claude-cli/work
 | Gemini CLI | `gemini-cli` | Windows、macOS、Linux | 文件覆盖层 |
 | Grok Build CLI | `grok-cli` | Windows、macOS、Linux | 进程密钥 |
 | Kimi Code CLI | `kimi-cli` | Windows、macOS、Linux | 进程密钥 |
-| Kiro | `kiro` | Windows、macOS、Linux | 操作系统用户或独立工具主目录 |
+| Kiro | `kiro` | Windows、macOS、Linux | 操作系统用户 |
 | OpenCode | `opencode` | Windows、macOS、Linux | 独立工具主目录 |
-| Windsurf | `windsurf` | Windows、macOS、Linux | 操作系统用户或独立工具主目录 |
+| Windsurf | `windsurf` | Windows、macOS、Linux | 操作系统用户 |
 | Zed | `zed` | Windows | 操作系统用户 |
 
 各平台的要求和已知限制请参阅[支持矩阵](../support-matrix.md)。运行 `multi-cli tools` 可查看本机可用的工具。
@@ -121,12 +121,12 @@ multi-cli claude-cli/work
 | 命令 | 操作 |
 |---|---|
 | `multi-cli new <tool>/<name>` | 创建凭据分离、正常状态共享的账户配置文件 |
-| `multi-cli new <tool>/<name> --isolated` | 创建整个主目录均隔离的配置文件；别名：`--isolate`、`-i` |
-| `multi-cli new <tool>/<name> --from <template>` | 从已保存的模板创建配置文件 |
+| `multi-cli new <tool>/<name> --isolated` | 在适配器支持时创建整个主目录均隔离的配置文件；别名：`--isolate`、`-i` |
+| `multi-cli new <tool>/<name> --from <template>` | 从 schema v2 模板创建 schema v2 配置文件 |
 | `multi-cli <tool>/<name>` | 启动配置文件 |
 | `multi-cli launch <tool>/<name> [-- args...]` | 启动工具并向其传递参数 |
 | `multi-cli list [<tool>]` | 列出配置文件 |
-| `multi-cli clone <tool>/<src> <tool>/<dest>` | 复制配置文件 |
+| `multi-cli clone <tool>/<src> <tool>/<dest>` | 复制 schema v2 配置文件 |
 | `multi-cli rename <tool>/<old> <tool>/<new>` | 重命名配置文件 |
 | `multi-cli delete <tool>/<name>` | 确认后删除配置文件 |
 
@@ -138,10 +138,10 @@ multi-cli claude-cli/work
 | `multi-cli auth status <tool>/<profile>` | 检查该密钥是否存在 |
 | `multi-cli auth clear <tool>/<profile>` | 删除该密钥 |
 | `multi-cli continue <tool> <src> <dest> [--dry-run] [--no-merge]` | 复制受支持的会话状态，绝不复制凭据 |
-| `multi-cli template save <tool>/<profile> <name>` | 保存不含凭据的模板 |
+| `multi-cli template save <tool>/<profile> <name>` | 保存不含凭据的 schema v2 模板 |
 | `multi-cli template list \| delete <name>` | 列出或删除模板 |
-| `multi-cli export <tool>/<name> [path]` | 导出配置文件 |
-| `multi-cli import <archive> <tool>/<name>` | 导入配置文件 |
+| `multi-cli export <tool>/<name> [path]` | 导出 schema v2 配置文件 |
+| `multi-cli import <archive> <tool>/<name>` | 导入 schema v2 归档 |
 
 ### 维护
 
@@ -166,7 +166,7 @@ multi-cli claude-cli/work
 | 操作系统用户 | 产品固定的操作系统凭据身份 | 除非适配器另有声明，否则不共享任何内容 |
 | 独立工具主目录 | 整个工具主目录 | 不共享任何内容 |
 
-账户配置文件采用满足安全要求的最小隔离边界。`--isolated` 使用独立的工具主目录，不共享任何内容。绑定到固定操作系统凭据身份的产品会使用由 Multi-CLI 管理的 Windows 用户，并需要以管理员权限运行终端。
+账户配置文件采用满足安全要求的最小隔离边界。`--isolated` 使用独立的工具主目录且不共享任何内容，但仅适用于声明支持整个目录隔离的适配器。基于操作系统用户的适配器会拒绝该选项，因为重定向文件夹无法隔离固定的系统凭据存储。绑定到该身份的产品会使用由 Multi-CLI 管理的操作系统用户；Windows 需要以管理员权限运行终端。
 
 使用进程密钥的适配器需要在启动前多执行一步：
 
@@ -181,6 +181,8 @@ multi-cli cursor-cli/work
 ```bash
 multi-cli migrate codex/work --dry-run
 ```
+
+只有 schema v2 配置文件、模板和归档支持移植。请先迁移旧版源配置文件，再克隆或创建新的模板或导出文件。
 
 <a id="move-sessions-between-accounts"></a>
 

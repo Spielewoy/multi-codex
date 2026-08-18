@@ -1,6 +1,6 @@
 # windsurf: Devin Desktop (Windsurf)
 
-**Account boundary:** `osUserCredentialStore`: Devin account or manual API-key login has no documented per-profile namespace, so shared profiles use an owned OS user. `--isolated` provides a whole-root alternative.
+**Account boundary:** `osUserCredentialStore`: Devin account or manual API-key login has no documented per-profile namespace, so profiles use an owned OS user.
 
 Windsurf is now Devin Desktop. The adapter detects both current and legacy binaries: `devin-desktop`, `surf`, `windsurf`.
 
@@ -10,17 +10,10 @@ Windsurf is now Devin Desktop. The adapter detects both current and legacy binar
 
 ## Quickstart
 
-Windows account profiles use an owned OS user:
+Profiles use an owned OS user:
 
 ```bash
 multi-cli new windsurf/work
-multi-cli launch windsurf/work
-```
-
-macOS and Linux can use an owned OS user with `sudo`, or a whole-root profile:
-
-```bash
-multi-cli new windsurf/work --isolated
 multi-cli launch windsurf/work
 ```
 
@@ -37,10 +30,11 @@ None claimed. Persistent state uses `~/.codeium/windsurf` on Windows, macOS, and
 ## Known limitations
 
 - Nothing is shared because current and legacy data roots can contain account state.
-- Legacy Windsurf paths may still be read by current binaries, so whole-root or OS-user isolation must include them.
+- Legacy Windsurf paths may still be read by current binaries, so OS-user isolation must include them.
+- `--isolated` is rejected because folder redirection cannot isolate the fixed OS credential store.
 
 ## Support
 
 | Windows | macOS | Linux |
 |---|---|---|
-| supported (owned OS user; elevated terminal) | supported (owned OS user with `sudo`, or `--isolated`) | supported (owned OS user with `sudo` and `acl`, or `--isolated`) |
+| supported (owned OS user; elevated terminal) | supported (owned OS user with `sudo`) | supported (owned OS user with `sudo` and `acl`) |

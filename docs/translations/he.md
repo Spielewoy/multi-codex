@@ -86,7 +86,7 @@ multi-cli launch claude-cli/work
 multi-cli claude-cli/work
 ```
 
-כברירת מחדל, פרטי האימות נשארים בתוך הפרופיל, בעוד הגדרות, שיחות, סוכנים, מיומנויות ותוספים נתמכים נשארים משותפים. הוסיפו `--isolated` כאשר יש להפריד את כל תיקיית הבית של הכלי.
+כברירת מחדל, פרטי האימות נשארים בתוך הפרופיל, בעוד הגדרות, שיחות, סוכנים, מיומנויות ותוספים נתמכים נשארים משותפים. השתמשו ב-`--isolated` רק עם מתאמים שתומכים בבידוד התיקייה כולה. מתאמים המבוססים על משתמש מערכת ההפעלה דוחים אותו, משום שהפניית תיקייה אינה מבודדת מאגר קבוע של פרטי אימות במערכת.
 
 <a id="supported-tools"></a>
 
@@ -107,9 +107,9 @@ multi-cli claude-cli/work
 | Gemini CLI | `gemini-cli` | Windows, macOS, Linux | שכבת קבצים |
 | Grok Build CLI | `grok-cli` | Windows, macOS, Linux | סוד תהליך |
 | Kimi Code CLI | `kimi-cli` | Windows, macOS, Linux | סוד תהליך |
-| Kiro | `kiro` | Windows, macOS, Linux | משתמש מערכת ההפעלה או תיקיית בית מבודדת |
+| Kiro | `kiro` | Windows, macOS, Linux | משתמש מערכת ההפעלה |
 | OpenCode | `opencode` | Windows, macOS, Linux | תיקיית בית מבודדת לכלי |
-| Windsurf | `windsurf` | Windows, macOS, Linux | משתמש מערכת ההפעלה או תיקיית בית מבודדת |
+| Windsurf | `windsurf` | Windows, macOS, Linux | משתמש מערכת ההפעלה |
 | Zed | `zed` | Windows | משתמש מערכת ההפעלה |
 
 דרישות הפלטפורמות והמגבלות הידועות מתועדות ב[טבלת התמיכה](../support-matrix.md). הפעילו `multi-cli tools` כדי לראות אילו כלים זמינים במחשב.
@@ -123,12 +123,12 @@ multi-cli claude-cli/work
 | פקודה | פעולה |
 |---|---|
 | `multi-cli new <tool>/<name>` | יצירת פרופיל עם פרטי אימות נפרדים ומצב רגיל משותף |
-| `multi-cli new <tool>/<name> --isolated` | יצירת פרופיל עם תיקיית בית מבודדת במלואה; כינויים: `--isolate`, `-i` |
-| `multi-cli new <tool>/<name> --from <template>` | יצירת פרופיל מתבנית שמורה |
+| `multi-cli new <tool>/<name> --isolated` | יצירת פרופיל עם תיקייה מבודדת במלואה כאשר המתאם תומך בכך; כינויים: `--isolate`, `-i` |
+| `multi-cli new <tool>/<name> --from <template>` | יצירת פרופיל בסכמה v2 מתבנית בסכמה v2 |
 | `multi-cli <tool>/<name>` | הפעלת פרופיל |
 | `multi-cli launch <tool>/<name> [-- args...]` | הפעלה והעברת ארגומנטים לכלי |
 | `multi-cli list [<tool>]` | הצגת פרופילים |
-| `multi-cli clone <tool>/<src> <tool>/<dest>` | העתקת פרופיל |
+| `multi-cli clone <tool>/<src> <tool>/<dest>` | העתקת פרופיל בסכמה v2 |
 | `multi-cli rename <tool>/<old> <tool>/<new>` | שינוי שם של פרופיל |
 | `multi-cli delete <tool>/<name>` | מחיקת פרופיל לאחר אישור |
 
@@ -140,10 +140,10 @@ multi-cli claude-cli/work
 | `multi-cli auth status <tool>/<profile>` | בדיקה אם הסוד קיים |
 | `multi-cli auth clear <tool>/<profile>` | הסרת הסוד |
 | `multi-cli continue <tool> <src> <dest> [--dry-run] [--no-merge]` | העתקת מצב סשן נתמך, ללא פרטי אימות |
-| `multi-cli template save <tool>/<profile> <name>` | שמירת תבנית ללא פרטי אימות |
+| `multi-cli template save <tool>/<profile> <name>` | שמירת תבנית בסכמה v2 ללא פרטי אימות |
 | `multi-cli template list \| delete <name>` | הצגת תבניות או מחיקתן |
-| `multi-cli export <tool>/<name> [path]` | ייצוא פרופיל |
-| `multi-cli import <archive> <tool>/<name>` | ייבוא פרופיל |
+| `multi-cli export <tool>/<name> [path]` | ייצוא פרופיל בסכמה v2 |
+| `multi-cli import <archive> <tool>/<name>` | ייבוא ארכיון בסכמה v2 |
 
 ### תחזוקה
 
@@ -168,7 +168,7 @@ multi-cli claude-cli/work
 | משתמש מערכת ההפעלה | זהות פרטי האימות הקבועה של המוצר | שום דבר, אלא אם המתאם מצהיר אחרת |
 | תיקיית בית מבודדת לכלי | כל תיקיית הבית של הכלי | שום דבר |
 
-פרופילי חשבונות משתמשים בגבול הבטוח המצומצם ביותר. `--isolated` משתמש בתיקיית בית נפרדת לכלי ואינו משתף דבר. מוצרים שמקושרים לזהות קבועה של פרטי אימות במערכת ההפעלה משתמשים במשתמש Windows שמנוהל על ידי Multi-CLI ודורשים טרמינל עם הרשאות מנהל.
+פרופילי חשבונות משתמשים בגבול הבטוח המצומצם ביותר. `--isolated` משתמש בתיקייה נפרדת ואינו משתף דבר, אך פועל רק עם מתאמים שתומכים בבידוד התיקייה כולה. מתאמים המבוססים על משתמש מערכת ההפעלה דוחים אותו, משום שהפניית תיקייה אינה מבודדת מאגר קבוע של פרטי אימות. מוצרים שמקושרים לזהות זו משתמשים במשתמש מערכת הפעלה שמנוהל על ידי Multi-CLI; ב-Windows נדרש טרמינל עם הרשאות מנהל.
 
 מתאמים שמשתמשים בסוד תהליך דורשים צעד נוסף לפני ההפעלה:
 
@@ -183,6 +183,8 @@ multi-cli cursor-cli/work
 ```bash
 multi-cli migrate codex/work --dry-run
 ```
+
+רק פרופילים, תבניות וארכיונים בסכמה v2 ניתנים להעברה. יש להעביר תחילה פרופיל מקור ישן לסכמה v2 לפני שכפולו או יצירת תבנית או ייצוא חדשים.
 
 <a id="move-sessions-between-accounts"></a>
 
