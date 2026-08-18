@@ -48,11 +48,11 @@ VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/release/VERSION")"
   exit 1
 }
 
-grep -Fxq "VERSION=\"$VERSION\"" "$ROOT_DIR/multi-cli" || {
+tr -d '\r' < "$ROOT_DIR/multi-cli" | grep -Fxq "VERSION=\"$VERSION\"" || {
   echo "multi-cli does not embed version $VERSION" >&2
   exit 1
 }
-grep -Fxq "\$VERSION = '$VERSION'" "$ROOT_DIR/multi-cli.ps1" || {
+tr -d '\r' < "$ROOT_DIR/multi-cli.ps1" | grep -Fxq "\$VERSION = '$VERSION'" || {
   echo "multi-cli.ps1 does not embed version $VERSION" >&2
   exit 1
 }
