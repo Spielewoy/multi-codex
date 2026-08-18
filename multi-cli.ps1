@@ -690,14 +690,22 @@ function Test-StoragePathWithin {
     return ($Child.TrimEnd('\', '/') + '\').StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
-function Get-StorageLinkTarget {
+function Get-StorageLinkInfo {
     param([string]$Path)
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if ($null -eq $item) { return $null }
     $linkType = Get-ObjectPropertySafe -Object $item -Name 'LinkType'
-    if ($linkType -ne 'Junction' -and $linkType -ne 'SymbolicLink') { return $null }
+    if ($linkType -ne 'Junction' -and $linkType -ne 'SymbolicLink' -and $linkType -ne 'HardLink') { return $null }
     $target = @((Get-ObjectPropertySafe -Object $item -Name 'Target'))[0]
     if (-not $target) { return $null }
+    return [pscustomobject]@{ Item = $item; LinkType = $linkType; Target = $target }
+}
+
+function Get-StorageLinkTarget {
+    param([string]$Path)
+    $link = Get-StorageLinkInfo -Path $Path
+    if ($null -eq $link) { return $null }
+    $target = $link.Target
     if (-not [System.IO.Path]::IsPathRooted($target)) {
         $target = Join-Path (Split-Path -Parent $Path) $target
     }
@@ -760,6 +768,46 @@ function Throw-LegacyTransferBlocked {
 function Throw-LegacyTemplateApplyBlocked {
     param([string]$Spec, [string]$TemplateName)
     throw "Cannot create '$Spec' from template '$TemplateName': legacy template application is disabled because old on-disk templates can contain credentials. Recreate the template from a migrated schema-v2 profile."
+}
+
+function Remove-StorageTreeNoReparse {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Get-Item -LiteralPath $Path -Force
+    $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($isReparsePoint) {
+        if ($item.PSIsContainer) {
+            [System.IO.Directory]::Delete($item.FullName)
+        } else {
+            [System.IO.File]::Delete($item.FullName)
+        }
+        return
+    }
+    if ($item.PSIsContainer) {
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue) {
+            Remove-StorageTreeNoReparse -Path $child.FullName
+        }
+    }
+    Remove-Item -LiteralPath $item.FullName -Force
+}
+
+function Copy-StorageTreeNoReparse {
+    param([string]$Source, [string]$Destination)
+    if (-not (Test-Path -LiteralPath $Source)) { return }
+    $item = Get-Item -LiteralPath $Source -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Cannot clone '$Source': nested reparse points are not supported inside isolated profile state."
+    }
+    if ($item.PSIsContainer) {
+        New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue) {
+            Copy-StorageTreeNoReparse -Source $child.FullName -Destination (Join-Path $Destination $child.Name)
+        }
+        return
+    }
+    $parent = Split-Path -Parent $Destination
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    Copy-Item -LiteralPath $item.FullName -Destination $Destination -Force
 }
 
 # =============================================================================
@@ -958,7 +1006,7 @@ function Remove-Profile {
             }
         }
     }
-    Remove-Item -Recurse -Force $profileDir
+    Remove-StorageTreeNoReparse -Path $profileDir
     Remove-AliasScript -Tool $p.Tool -Name $p.Name
     Remove-StartMenuShortcut -Tool $p.Tool -Name $p.Name
     Write-Host "Deleted profile '$Spec'"
@@ -1010,17 +1058,22 @@ function Copy-ProfileTo {
                 $sourceState = Join-Path $srcDir ($runtimeSubdir -replace '/', '\')
                 $destinationState = Join-Path $destDir ($runtimeSubdir -replace '/', '\')
             }
-            foreach ($relativePath in @($normalState.sharedPaths) + @($normalState.sessionPaths)) {
-                if (-not $relativePath) { continue }
-                $source = Join-Path $sourceState ($relativePath -replace '/', '\')
-                if (-not (Test-Path -LiteralPath $source)) { continue }
-                $destination = Join-Path $destinationState ($relativePath -replace '/', '\')
-                $parent = Split-Path -Parent $destination
-                if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-                Copy-Item -LiteralPath $source -Destination $destination -Recurse
+            try {
+                foreach ($relativePath in @($normalState.sharedPaths) + @($normalState.sessionPaths)) {
+                    if (-not $relativePath) { continue }
+                    $source = Join-Path $sourceState ($relativePath -replace '/', '\')
+                    if (-not (Test-Path -LiteralPath $source)) { continue }
+                    $destination = Join-Path $destinationState ($relativePath -replace '/', '\')
+                    $parent = Split-Path -Parent $destination
+                    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+                    Copy-StorageTreeNoReparse -Source $source -Destination $destination
+                }
+                New-Item -ItemType File -Path (Join-Path $destDir '.isolated') | Out-Null
+                Write-IsolatedProfileMetadata -Adapter $adapter -ProfileDir $destDir
+            } catch {
+                Remove-StorageTreeNoReparse -Path $destDir
+                throw
             }
-            New-Item -ItemType File -Path (Join-Path $destDir '.isolated') | Out-Null
-            Write-IsolatedProfileMetadata -Adapter $adapter -ProfileDir $destDir
         } else {
             Import-RuntimeModule
             Initialize-RuntimeProfile -Adapter $adapter -ProfileDir $destDir

@@ -7,7 +7,7 @@
 3. Run the complete test suite.
 4. Build both archives locally.
 5. Merge the release commit into `main`.
-6. Create and push a signed `vX.Y.Z` tag from that commit.
+6. Create and push an annotated `vX.Y.Z` tag from that commit.
 
 ```bash
 bash scripts/release-build.sh

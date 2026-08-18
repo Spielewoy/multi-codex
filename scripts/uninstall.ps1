@@ -26,6 +26,29 @@ function Assert-MultiCliInstall {
     }
 }
 
+function Remove-UninstallTreeNoReparse {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Get-Item -LiteralPath $Path -Force
+    $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($isReparsePoint) {
+        if ($item.PSIsContainer) {
+            [System.IO.Directory]::Delete($item.FullName)
+        } else {
+            [System.IO.File]::Delete($item.FullName)
+        }
+        return
+    }
+    if ($item.PSIsContainer) {
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue) {
+            Remove-UninstallTreeNoReparse -Path $child.FullName
+        }
+        [System.IO.Directory]::Delete($item.FullName)
+        return
+    }
+    Remove-Item -LiteralPath $item.FullName -Force
+}
+
 function Test-UserPathEntry {
     param([string]$Path, [string]$Entry)
     if (-not $Path) { return $false }
@@ -144,7 +167,7 @@ if (Test-Path $ProfileDir) {
     if ($confirm -match '^[Yy]$') {
         Assert-SafeRemovalPath -Path $ProfileDir -Purpose 'profile'
         Remove-UninstallProfileResources -ProfilesRoot $ProfileDir
-        Remove-Item -Recurse -Force $ProfileDir
+        Remove-UninstallTreeNoReparse -Path $ProfileDir
         Write-Host "Removed $ProfileDir"
     } else {
         Write-Host "Profiles kept at $ProfileDir"
@@ -152,7 +175,7 @@ if (Test-Path $ProfileDir) {
 }
 
 if ($shouldRemoveInstall) {
-    Remove-Item -Recurse -Force $InstallDir
+    Remove-UninstallTreeNoReparse -Path $InstallDir
     Write-Host "Removed $InstallDir"
 }
 

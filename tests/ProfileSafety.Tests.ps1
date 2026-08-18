@@ -240,8 +240,23 @@ function Write-LegacyProfileFixtureAdapter {
 }
 
 function Invoke-ProfileFixtureLauncher {
-    param($Scratch, [string[]]$Arguments, [string]$Probe)
-    $environment = @{
+    param(
+        $Scratch,
+        [string[]]$Arguments,
+        [string]$Probe,
+        [string]$StdinText,
+        [int]$TimeoutSeconds = 120
+    )
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = (Get-Command powershell.exe).Source
+    $quotedArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:ProfileLauncher) + $Arguments
+    $startInfo.Arguments = ($quotedArguments | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join ' '
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    foreach ($entry in @{
         USERPROFILE = $Scratch.UserHome
         HOME = $Scratch.UserHome
         APPDATA = (Join-Path $Scratch.UserHome 'AppData\Roaming')
@@ -249,20 +264,85 @@ function Invoke-ProfileFixtureLauncher {
         MULTICLI_HOME = $Scratch.Profiles
         MULTICLI_TOOLS_DIR = $Scratch.Tools
         PATH = "$($Scratch.Profiles)\bin;$env:PATH"
+    }.GetEnumerator()) { $startInfo.EnvironmentVariables[$entry.Key] = $entry.Value }
+    if ($Probe) { $startInfo.EnvironmentVariables['MULTICLI_OVERRIDE_BINARY'] = $Probe }
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    if ($null -ne $StdinText) {
+        $inputBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($StdinText + "`n")
+        $process.StandardInput.BaseStream.Write($inputBytes, 0, $inputBytes.Length)
     }
-    if ($Probe) { $environment['MULTICLI_OVERRIDE_BINARY'] = $Probe }
-    $original = @{}
-    foreach ($entry in $environment.GetEnumerator()) {
-        $original[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, 'Process')
-        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+    $process.StandardInput.Close()
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+    if ($timedOut) { $process.Kill(); $process.WaitForExit() }
+    return [pscustomobject]@{
+        ExitCode = $(if ($timedOut) { -1 } else { $process.ExitCode })
+        Output = $stdoutTask.Result + $stderrTask.Result
+        TimedOut = $timedOut
     }
-    try {
-        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script:ProfileLauncher @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    } finally {
-        foreach ($name in $original.Keys) { [Environment]::SetEnvironmentVariable($name, $original[$name], 'Process') }
+}
+
+function Invoke-UninstallScript {
+    param(
+        [string]$Root,
+        [string]$InstallDir,
+        [string]$ProfileDir,
+        [string]$StdinText,
+        [int]$TimeoutSeconds = 120
+    )
+    $userHome = Join-Path $Root 'home'
+    $binDir = Join-Path $Root 'bin'
+    New-Item -ItemType Directory -Force -Path $userHome, $binDir | Out-Null
+    $stdinPath = Join-Path $Root 'uninstall-stdin.txt'
+    Set-Content -LiteralPath $stdinPath -Value $StdinText -Encoding ASCII
+    $scriptPath = Join-Path $script:ProfileRepoRoot 'scripts\uninstall.ps1'
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = (Get-Command cmd.exe).Source
+    $startInfo.Arguments = '/d /c type "' + $stdinPath + '" | "' + (Get-Command powershell.exe).Source + '" -NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '"'
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    foreach ($entry in @{
+        USERPROFILE = $userHome
+        HOME = $userHome
+        APPDATA = (Join-Path $userHome 'AppData\Roaming')
+        LOCALAPPDATA = (Join-Path $userHome 'AppData\Local')
+        MULTICLI_INSTALL_DIR = $InstallDir
+        MULTICLI_BIN_DIR = $binDir
+        MULTICLI_HOME = $ProfileDir
+    }.GetEnumerator()) { $startInfo.EnvironmentVariables[$entry.Key] = $entry.Value }
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+    if ($timedOut) { $process.Kill(); $process.WaitForExit() }
+    return [pscustomobject]@{
+        ExitCode = $(if ($timedOut) { -1 } else { $process.ExitCode })
+        Output = $stdoutTask.Result + $stderrTask.Result
+        TimedOut = $timedOut
     }
-    return [pscustomobject]@{ ExitCode = $exitCode; Output = ($output | Out-String) }
+}
+
+function Remove-TestLink {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Get-Item -LiteralPath $Path -Force
+    if (-not ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        if ($item.PSIsContainer) {
+            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+        }
+        return
+    }
+    if ($item.PSIsContainer) {
+        [System.IO.Directory]::Delete($item.FullName)
+    } else {
+        [System.IO.File]::Delete($item.FullName)
+    }
 }
 
 Describe 'profile path containment and legacy transfer hardening' {
@@ -485,6 +565,151 @@ Describe 'profile path containment and legacy transfer hardening' {
             $result.Output | Should Match 'multi-cli migrate legacycli/work'
             (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'legacycli\work')) | Should Be $false
         } finally {
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'PowerShell no-reparse profile cleanup and clone behavior' {
+    It 'delete removes a profile tree without traversing a nested junction target' {
+        $scratch = New-ProfileFixtureScratch
+        $link = $null
+        $outsideRoot = Join-Path $scratch.Root 'outside-delete-target'
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            $created = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('new', 'fixture/delete-safe', '--no-seed')
+            $created.ExitCode | Should Be 0
+            $profileDir = Join-Path $scratch.Profiles 'fixture\delete-safe'
+            $linkParent = Join-Path $profileDir 'sessions'
+            $link = Join-Path $linkParent 'shared-target'
+            New-Item -ItemType Directory -Force -Path $linkParent, $outsideRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Value 'outside-delete-data' -Encoding ASCII
+            New-Item -ItemType Junction -Path $link -Target $outsideRoot | Out-Null
+
+            $deleted = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('delete', 'fixture/delete-safe') -StdinText 'y'
+
+            $deleted.TimedOut | Should Be $false
+            $deleted.ExitCode | Should Be 0
+            $deleted.Output | Should Match "Deleted profile 'fixture/delete-safe'"
+            (Test-Path -LiteralPath $profileDir) | Should Be $false
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Raw).Trim() | Should Be 'outside-delete-data'
+        } finally {
+            Remove-TestLink -Path $link
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'uninstall removes the profiles root without traversing a nested junction target' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ("mcli_uninstall_profiles_" + [guid]::NewGuid().ToString('N'))
+        $profilesRoot = Join-Path $root 'profiles'
+        $installDir = Join-Path $root 'missing-install'
+        $outsideRoot = Join-Path $root 'outside-profile-target'
+        $link = $null
+        try {
+            $linkParent = Join-Path $profilesRoot 'fixture\alpha\sessions'
+            $link = Join-Path $linkParent 'shared-target'
+            New-Item -ItemType Directory -Force -Path $linkParent, $outsideRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Value 'outside-profile-data' -Encoding ASCII
+            New-Item -ItemType Junction -Path $link -Target $outsideRoot | Out-Null
+
+            $result = Invoke-UninstallScript -Root $root -InstallDir $installDir -ProfileDir $profilesRoot -StdinText 'y'
+            if ($result.ExitCode -ne 0 -or (Test-Path -LiteralPath $profilesRoot)) {
+                Write-Host $result.Output
+                if (Test-Path -LiteralPath $profilesRoot) {
+                    Get-ChildItem -LiteralPath $profilesRoot -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+                }
+            }
+
+            $result.TimedOut | Should Be $false
+            $result.ExitCode | Should Be 0
+            $result.Output | Should Match 'multi-cli uninstalled'
+            (Test-Path -LiteralPath $profilesRoot) | Should Be $false
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Raw).Trim() | Should Be 'outside-profile-data'
+        } finally {
+            Remove-TestLink -Path $link
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $profilesRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'uninstall removes the install root without traversing a nested junction target' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ("mcli_uninstall_install_" + [guid]::NewGuid().ToString('N'))
+        $profilesRoot = Join-Path $root 'missing-profiles'
+        $installDir = Join-Path $root 'install'
+        $outsideRoot = Join-Path $root 'outside-install-target'
+        $link = $null
+        try {
+            $linkParent = Join-Path $installDir 'lib'
+            $link = Join-Path $linkParent 'shared-target'
+            New-Item -ItemType Directory -Force -Path $linkParent, $outsideRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $installDir 'multi-cli.ps1') -Value '# stub' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Value 'outside-install-data' -Encoding ASCII
+            New-Item -ItemType Junction -Path $link -Target $outsideRoot | Out-Null
+
+            $result = Invoke-UninstallScript -Root $root -InstallDir $installDir -ProfileDir $profilesRoot -StdinText 'y'
+            if ($result.ExitCode -ne 0 -or (Test-Path -LiteralPath $installDir)) {
+                Write-Host $result.Output
+                if (Test-Path -LiteralPath $installDir) {
+                    Get-ChildItem -LiteralPath $installDir -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+                }
+            }
+
+            $result.TimedOut | Should Be $false
+            $result.ExitCode | Should Be 0
+            $result.Output | Should Match 'multi-cli uninstalled'
+            (Test-Path -LiteralPath $installDir) | Should Be $false
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Raw).Trim() | Should Be 'outside-install-data'
+        } finally {
+            Remove-TestLink -Path $link
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'isolated clone refuses nested junction content instead of copying or recreating an outside target link' {
+        $scratch = New-ProfileFixtureScratch
+        $sourceLink = $null
+        $destinationLink = $null
+        $outsideRoot = Join-Path $scratch.Root 'outside-clone-target'
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            $source = Join-Path $scratch.Profiles 'fixture\source'
+            $sessions = Join-Path $source 'sessions'
+            $sourceLink = Join-Path $sessions 'shared-target'
+            New-Item -ItemType Directory -Force -Path $sessions, $outsideRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $source 'config.toml') -Value 'source-config' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $source 'history.jsonl') -Value 'source-history' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Value 'outside-clone-data' -Encoding ASCII
+            New-Item -ItemType Junction -Path $sourceLink -Target $outsideRoot | Out-Null
+            [ordered]@{
+                schemaVersion = 2
+                adapterId = 'fixture'
+                profileId = [guid]::NewGuid().ToString()
+                mode = 'isolated'
+            } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $source '.profile.json') -Encoding UTF8
+            New-Item -ItemType File -Path (Join-Path $source '.isolated') | Out-Null
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('clone', 'fixture/source', 'fixture/dest')
+            if ($result.ExitCode -eq 0 -or (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'fixture\dest'))) {
+                Write-Host $result.Output
+                if (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'fixture\dest')) {
+                    Get-ChildItem -LiteralPath (Join-Path $scratch.Profiles 'fixture\dest') -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+                }
+            }
+
+            $result.ExitCode | Should Be 1
+            $destinationLink = Join-Path $scratch.Profiles 'fixture\dest\sessions\shared-target'
+            $result.Output | Should Match 'reparse point'
+            (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'fixture\dest')) | Should Be $false
+            (Test-Path -LiteralPath $destinationLink) | Should Be $false
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'keep.txt') -Raw).Trim() | Should Be 'outside-clone-data'
+        } finally {
+            Remove-TestLink -Path $destinationLink
+            Remove-TestLink -Path $sourceLink
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

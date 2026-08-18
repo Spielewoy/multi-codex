@@ -35,6 +35,53 @@ def get_coverage(result: dict[str, object]) -> dict[str, list[int | None]]:
     return coverage
 
 
+def executable_line_numbers(source: Path) -> set[int]:
+    executable: set[int] = set()
+    in_single = False
+    in_double = False
+
+    for number, raw_line in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1):
+        index = 0
+        saw_code = False
+        saw_unquoted_nonspace = False
+
+        while index < len(raw_line):
+            char = raw_line[index]
+            escaped = index > 0 and raw_line[index - 1] == "\\"
+
+            if in_single:
+                if char == "'":
+                    in_single = False
+                index += 1
+                continue
+
+            if in_double:
+                if char == '"' and not escaped:
+                    in_double = False
+                index += 1
+                continue
+
+            if char in " \t":
+                index += 1
+                continue
+            if char == "#":
+                break
+
+            saw_code = True
+            if char == "'":
+                in_single = True
+            elif char == '"' and not escaped:
+                in_double = True
+            else:
+                saw_unquoted_nonspace = True
+            index += 1
+
+        if saw_unquoted_nonspace or (saw_code and not in_single and not in_double):
+            executable.add(number)
+
+    return executable
+
+
 def build_cobertura(
     coverage: dict[str, list[int | None]], repo: Path, pathspecs: list[str]
 ) -> ET.ElementTree:
@@ -48,10 +95,11 @@ def build_cobertura(
             continue
         if not any(fnmatch.fnmatch(relative_path, pathspec) for pathspec in pathspecs):
             continue
+        executable_lines = executable_line_numbers(path)
         class_node = ET.SubElement(classes, "class", filename=relative_path)
         lines_node = ET.SubElement(class_node, "lines")
         for number, hits in enumerate(hits_by_line, start=1):
-            if hits is not None:
+            if hits is not None and number in executable_lines:
                 ET.SubElement(lines_node, "line", number=str(number), hits=str(hits))
     return ET.ElementTree(root)
 
