@@ -36,7 +36,7 @@ param (
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSION = '0.1.0'
+$VERSION = '1.0.0'
 $UTF8_BOM_BYTES = [byte[]](0xEF, 0xBB, 0xBF)
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition

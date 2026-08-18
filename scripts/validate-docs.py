@@ -10,21 +10,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLATFORMS = ("windows", "macos", "linux")
-README_FILES = (
-    "README.md",
-    "README.es.md",
-    "README.ar.md",
-    "README.zh.md",
-    "README.ru.md",
-    "README.he.md",
+README_FILES = ("README.md",)
+TRANSLATION_FILES = (
+    "docs/translations/es.md",
+    "docs/translations/ar.md",
+    "docs/translations/zh.md",
+    "docs/translations/ru.md",
+    "docs/translations/he.md",
 )
 DEFAULT_PROFILE_DESCRIPTIONS = {
     "README.md": "Create an account profile (credentials separate; normal state shared)",
-    "README.es.md": "Crear un perfil de cuenta (credenciales separadas; estado normal compartido)",
-    "README.ar.md": "إنشاء ملف تعريف حساب (بيانات اعتماد منفصلة وحالة عادية مشتركة)",
-    "README.zh.md": "创建账户配置文件（凭据独立，常规状态共享）",
-    "README.ru.md": "Создать профиль аккаунта (отдельные учётные данные, общее обычное состояние)",
-    "README.he.md": "יצירת פרופיל חשבון (אישורים נפרדים ומצב רגיל משותף)",
 }
 RETIRED_SUPPORT_TERMS = re.compile(
     r"\bexperimental\b|\bunverified\b|\bexperiment(?:al|ell|almente)\b|"
@@ -44,10 +39,17 @@ def load_adapters() -> list[dict]:
 def table_rows(readme: str) -> dict[str, list[str]]:
     rows = {}
     for line in readme.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 4 and re.fullmatch(r"`[^`]+`", cells[1]):
+            platforms = cells[2].lower()
+            rows[cells[1].strip("`")] = [
+                "supported" if platform in platforms else "unsupported"
+                for platform in PLATFORMS
+            ]
+            continue
         match = re.match(r"\| \[([^]]+)]\(([^/)]+)/\) \|.*\|$", line)
         if not match:
             continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         rows[match.group(2)] = cells[-3:]
     return rows
 
@@ -104,6 +106,11 @@ def main() -> int:
         path = REPO_ROOT / file_name
         errors.extend(validate_readme(path, adapters))
         errors.extend(validate_local_links(path))
+    for file_name in TRANSLATION_FILES:
+        path = REPO_ROOT / file_name
+        errors.extend(validate_local_links(path))
+    for path in REPO_ROOT.glob("README.*.md"):
+        errors.extend(validate_local_links(path))
     for path in REPO_ROOT.glob("*/README.md"):
         errors.extend(validate_local_links(path))
         if RETIRED_SUPPORT_TERMS.search(path.read_text(encoding="utf-8")):
@@ -111,7 +118,7 @@ def main() -> int:
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    print(f"Validated {len(README_FILES)} main READMEs and {len(adapters)} adapter support rows.")
+    print(f"Validated {len(README_FILES)} main README(s), {len(TRANSLATION_FILES)} translation(s), and {len(adapters)} adapter support rows.")
     return 0
 
 

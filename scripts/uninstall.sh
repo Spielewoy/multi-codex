@@ -8,6 +8,25 @@ PROFILE_DIR="${MULTICLI_HOME:-$HOME/MultiCliProfiles}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE_ROOT="$(dirname "$SCRIPT_DIR")"
 
+assert_safe_remove_dir() {
+  local target="$1" purpose="$2" resolved parent
+  [ -d "$target" ] || return 0
+  resolved="$(cd "$target" && pwd -P)"
+  parent="$(dirname "$resolved")"
+  if [ "$resolved" = "/" ] || [ "$resolved" = "$HOME" ] || [ "$parent" = "$resolved" ] || [ "$parent" = "/" ]; then
+    echo "Error: refusing to remove unsafe $purpose path: $resolved" >&2
+    return 1
+  fi
+}
+
+assert_multi_cli_install() {
+  local target="$1"
+  [ -f "$target/multi-cli" ] && [ -d "$target/lib" ] || {
+    echo "Error: refusing to remove $target because it is not a recognizable multi-cli installation." >&2
+    return 1
+  }
+}
+
 uninstall_adapter_path() {
   local tool="$1" candidate
   for candidate in "$SOURCE_ROOT/$tool/adapter.json" "$INSTALL_DIR/$tool/adapter.json"; do
@@ -62,14 +81,19 @@ fi
 remove_install=false
 if [ -d "$INSTALL_DIR" ] && [ "$INSTALL_DIR" != "$(pwd)" ]; then
   printf "Remove install directory %s? [y/N] " "$INSTALL_DIR"
-  read -r confirm
-  [[ "$confirm" =~ ^[Yy]$ ]] && remove_install=true
+  read -r confirm || confirm=""
+  if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    assert_safe_remove_dir "$INSTALL_DIR" "install" || exit 1
+    assert_multi_cli_install "$INSTALL_DIR" || exit 1
+    remove_install=true
+  fi
 fi
 
 if [ -d "$PROFILE_DIR" ]; then
   printf "Remove all profiles at %s? [y/N] " "$PROFILE_DIR"
-  read -r confirm
+  read -r confirm || confirm=""
   if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    assert_safe_remove_dir "$PROFILE_DIR" "profile" || exit 1
     uninstall_profile_resources || {
       echo "Error: could not clean all profile-owned credentials or OS users; profiles were preserved." >&2
       exit 1

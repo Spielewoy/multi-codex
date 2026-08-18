@@ -9,7 +9,7 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="0.1.0"
+VERSION="1.0.0"
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 TOOLS_DIR="${MULTICLI_TOOLS_DIR:-$SCRIPT_DIR}"
@@ -110,6 +110,26 @@ assert_adapter_valid() {
 
 # Print the first binary candidate that exists (path or PATH lookup) for the
 # current platform; returns 1 when none resolve. MULTICLI_OVERRIDE_BINARY wins.
+find_windows_appx_binary() {
+  local candidate="$1"
+  [ "$(platform)" = windows ] || return 1
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  MULTICLI_WINDOWS_BINARY_CANDIDATE="$candidate" powershell.exe -NoProfile -NonInteractive -Command '
+    $candidate = $env:MULTICLI_WINDOWS_BINARY_CANDIDATE
+    if ($candidate -notlike "appx:*") { exit 1 }
+    $parts = $candidate.Substring(5).Split("!", 2)
+    if ($parts.Count -ne 2) { exit 1 }
+    $package = Get-AppxPackage -Name $parts[0] -PackageTypeFilter Main -ErrorAction SilentlyContinue |
+      Where-Object { $_.SignatureKind -eq "Store" } |
+      Sort-Object Version -Descending | Select-Object -First 1
+    if ($null -eq $package) { exit 1 }
+    $application = @((Get-AppxPackageManifest -Package $package).Package.Applications.Application) |
+      Where-Object { $_.Id -eq $parts[1] } | Select-Object -First 1
+    if ($null -eq $application) { exit 1 }
+    Write-Output ("appx:{0}!{1}" -f $package.PackageFamilyName, $parts[1])
+  ' 2>/dev/null | tr -d '\r'
+}
+
 find_adapter_binary() {
   local tool_id="$1"
   [ -n "${MULTICLI_OVERRIDE_BINARY:-}" ] && { printf '%s\n' "$MULTICLI_OVERRIDE_BINARY"; return 0; }
@@ -122,6 +142,18 @@ find_adapter_binary() {
 
   while IFS= read -r c; do
     [ -z "$c" ] && continue
+    case "$c" in
+      appx:*)
+        [ "$(json_str '.isolation.strategy' "$apath")" = accountOverlay ] || continue
+        [ "$(json_str '.account.mechanism' "$apath")" = osUserCredentialStore ] || continue
+        resolved="$(find_windows_appx_binary "$c")" && [ -n "$resolved" ] && {
+          printf '%s\n' "$resolved"
+          return 0
+        }
+        continue
+        ;;
+      uri:*) continue ;;
+    esac
     resolved="$(resolve_path_token "$c")"
     [ -x "$resolved" ] && { printf '%s\n' "$resolved"; return 0; }
     command -v "$resolved" >/dev/null 2>&1 && { command -v "$resolved"; return 0; }
@@ -987,6 +1019,9 @@ cmd_launch() {
   # Isolated profiles share nothing: the profile dir is the tool's whole root,
   # so the account-overlay runtime (shared links, overlay) is bypassed.
   if [ "$strategy" = "accountOverlay" ] && [ -f "$pdir/.isolated" ]; then
+    if [ "$(json_str '.account.mechanism' "$apath")" = osUserCredentialStore ]; then
+      abort "Profile '$spec' cannot use --isolated because folder redirection does not isolate the OS credential store."
+    fi
     echo "Launching $display profile '$spec' [$strategy, isolated]"
     launch_isolated "$TOOL" "$pdir" "$binary" "${binary_args[@]+"${binary_args[@]}"}"
     return
@@ -1239,13 +1274,13 @@ launch_sandbox_user() {
   case "$(platform)" in
     macos)
       if ! dscl . -read /Users/"$username" &>/dev/null; then
-        echo "First launch — creating sandbox user (requires sudo)..."
+        echo "First launch: creating sandbox user (requires sudo)..."
         create_sandbox_user "$profile_name" "$pdir"
       fi
       ;;
     linux)
       if ! id "$username" &>/dev/null; then
-        echo "First launch — creating sandbox user (requires sudo)..."
+        echo "First launch: creating sandbox user (requires sudo)..."
         create_sandbox_user "$profile_name" "$pdir"
       fi
       ;;

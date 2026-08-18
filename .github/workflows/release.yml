@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Verify tag and embedded versions
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          test "$GITHUB_REF_NAME" = "v$version"
+          bash scripts/release-build.sh --check --version "$version"
+          pwsh -NoProfile -File scripts/release-build.ps1 -Check -ExpectedVersion "$version"
+
+      - name: Validate adapters
+        shell: bash
+        run: |
+          bash scripts/validate-adapters.sh
+          pwsh -NoProfile -File scripts/Validate-Adapters.ps1
+
+      - name: Build archives
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          bash scripts/release-build.sh --output dist --version "$version"
+          pwsh -NoProfile -File scripts/release-build.ps1 -OutputDirectory dist -ExpectedVersion "$version"
+          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
+
+      - name: Inspect archives
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          tar -tzf "dist/multi-cli-v$version-linux-macos.tar.gz" | grep -Fx "multi-cli-v$version/multi-cli"
+          unzip -Z1 "dist/multi-cli-v$version-windows.zip" | tr '\\' '/' | grep -Fx "multi-cli-v$version/multi-cli.ps1"
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-assets
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out release notes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Record build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "Multi-CLI v$version" \
+            --notes-file release/NOTES.md

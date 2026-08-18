@@ -133,7 +133,7 @@ ensure_jq() {
     return 0
   fi
 
-  # No package manager succeeded — fall back to the official static binary.
+  # No package manager succeeded, so fall back to the official static binary.
   if install_jq_from_release "$bin_dir"; then
     echo "Installed jq to $bin_dir: $(command -v jq)"
     return 0
@@ -152,6 +152,7 @@ for arg in "$@"; do
   case "$arg" in
     --local) local_install=true ;;
     --help|-h) usage ;;
+    *) echo "Error: unknown option '$arg'. Run with --help for usage." >&2; exit 2 ;;
   esac
 done
 
@@ -168,8 +169,17 @@ else
     echo "  export MULTICLI_REPO=https://github.com/Spielewoy/multi-cli.git" >&2
     exit 1
   fi
+  command -v git >/dev/null 2>&1 || {
+    echo "Error: git is required to install multi-cli from GitHub." >&2
+    exit 1
+  }
   echo "Cloning from $REPO_URL ..."
   if [ -d "$INSTALL_DIR" ]; then
+    [ -e "$INSTALL_DIR/.git" ] || {
+      echo "Error: $INSTALL_DIR exists but is not a Git checkout." >&2
+      echo "Move it, choose MULTICLI_INSTALL_DIR, or use --local from a multi-cli checkout." >&2
+      exit 1
+    }
     echo "Updating existing installation at $INSTALL_DIR"
     git -C "$INSTALL_DIR" pull --ff-only
   else
@@ -178,20 +188,21 @@ else
   fi
 fi
 
+[ -f "$INSTALL_DIR/multi-cli" ] || {
+  echo "Error: $INSTALL_DIR does not contain the multi-cli entrypoint." >&2
+  exit 1
+}
 chmod +x "$INSTALL_DIR/multi-cli"
+
+ensure_jq "$(dirname "$BIN_LINK")"
 
 # A launcher that execs the real script in the repo. A bare symlink breaks
 # adapter discovery: multi-cli derives its tools dir from $0, and a symlink's
 # dirname is the link location (and on MSYS `ln -sf` copies, losing the repo
 # entirely). Exec'ing the absolute path keeps $0 pointed at the repo.
 mkdir -p "$(dirname "$BIN_LINK")"
-cat > "$BIN_LINK" <<LAUNCHER
-#!/usr/bin/env bash
-exec "$INSTALL_DIR/multi-cli" "\$@"
-LAUNCHER
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$INSTALL_DIR/multi-cli" > "$BIN_LINK"
 chmod +x "$BIN_LINK"
-
-ensure_jq "$(dirname "$BIN_LINK")"
 
 echo ""
 echo "Installed multi-cli to $INSTALL_DIR"

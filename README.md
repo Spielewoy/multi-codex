@@ -1,314 +1,241 @@
-**English** | [Español](README.es.md) | [العربية](README.ar.md) | [中文](README.zh.md) | [Русский](README.ru.md) | [עברית](README.he.md)
+<p align="center">
+  <img src="assets/banner.svg" alt="Multi-CLI. Use multiple accounts simultaneously without switching." width="760"/>
+</p>
 
-# multi-cli
+<p align="center">Use multiple accounts simultaneously without switching.</p>
 
-**Run multiple account profiles for AI coding tools simultaneously.**
+<p align="center">
+  <a href="#supported-tools"><img src="https://img.shields.io/badge/support-17%20adapters-255C60?style=flat-square&labelColor=14101F" alt="17 adapters"/></a>
+  <a href="https://github.com/Spielewoy/multi-cli/releases/latest"><img src="https://img.shields.io/github/v/release/Spielewoy/multi-cli?style=flat-square&label=version&color=255C60&labelColor=14101F" alt="Version 1.0.0"/></a>
+  <a href="#install"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-255C60?style=flat-square&labelColor=14101F" alt="macOS, Linux, and Windows"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-255C60?style=flat-square&labelColor=14101F" alt="License MIT"/></a>
+</p>
 
-By default, each profile gets separate account credentials while conversations, configuration, agents, skills, and plugins stay shared where the tool allows it. Use `--isolated` when you want the entire tool home separated. Tools whose login cannot be separated safely use OS-user isolation instead. See the [support matrix](docs/support-matrix.md) for per-platform requirements.
+<p align="center">
+  <a href="README.md"><b>English</b></a> |
+  <a href="docs/translations/es.md">Español</a> |
+  <a href="docs/translations/ar.md">العربية</a> |
+  <a href="docs/translations/zh.md">中文</a> |
+  <a href="docs/translations/ru.md">Русский</a> |
+  <a href="docs/translations/he.md">עברית</a>
+</p>
 
-Profiles created by older multi-cli versions keep their whole-root behavior until migrated — see [Legacy Profiles](#legacy-profiles).
+## Contents
 
-[![GitHub repository](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/Spielewoy/multi-cli)
-[![GitHub profile](https://img.shields.io/badge/GitHub-Spielewoy-lightgrey?logo=github)](https://github.com/Spielewoy)
-[![GitHub stars](https://img.shields.io/github/stars/Spielewoy/multi-cli?style=social)](https://github.com/Spielewoy/multi-cli/stargazers)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#install)
-[![License](https://img.shields.io/badge/license-MIT-green)](#license)
-
----
-
-## Supported Tools
-
-17 adapters ship in this repository. Status is per operating system and binary: `supported` means multi-cli provides account isolation on that OS (any mode requirements are noted), and `unsupported` means no isolation mode works there. The authoritative source is [docs/support-matrix.md](docs/support-matrix.md).
-
-| Tool | Kind | Windows | macOS | Linux |
-|------|------|---------|-------|-------|
-| [Claude Code](claude-cli/) | CLI | supported (file overlay) | supported for API-key profiles only; subscription OAuth is unsupported | supported (file overlay) |
-| [OpenAI Codex CLI](codex/) | CLI | supported (file overlay; file credential store mode) | supported | supported |
-| [Gemini CLI](gemini-cli/) | CLI | supported (file overlay) | supported | supported |
-| [OpenCode](opencode/) | CLI | supported (`--isolated` whole-root) | supported (`--isolated` whole-root) | supported (`--isolated` whole-root) |
-| [Command Code](commandcode/) | CLI | supported (file overlay; use `commandcode`, bare `cmd` collides with cmd.exe) | supported | supported |
-| [Cursor Desktop](cursor/) | IDE | supported (`--isolated` whole-root) | supported (`--isolated` whole-root) | supported (`--isolated` whole-root) |
-| [Cursor CLI](cursor-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Antigravity](antigravity/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
-| [AGY CLI](agy-cli/) | CLI | supported (OS-user isolation; elevated terminal) | unsupported (owned-user Keychain isolation not proven) | unsupported (owned-user Secret Service session not implemented) |
-| [Kiro](kiro/) | IDE | supported (OS-user isolation) | supported (`--isolated` whole-root) | supported (`--isolated` whole-root) |
-| [Zed](zed/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
-| [Devin Desktop / Windsurf](windsurf/) | IDE | supported (OS-user isolation; elevated terminal) | supported (`--isolated` whole-root) | supported (`--isolated` whole-root) |
-| [GitHub Copilot CLI](copilot-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Copilot in VS Code](copilot-vscode/) | IDE | supported (OS-user isolation; elevated terminal) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (owned-user GUI/Secret Service session not implemented) |
-| [Kimi Code CLI](kimi-cli/) | CLI | supported (process token via `multi-cli auth set`) | supported | supported |
-| [Codex Desktop App](codex-gui/) | GUI | supported (owned Windows user and Store AppX activation) | unsupported (owned-user GUI/Keychain session not proven) | unsupported (no desktop app) |
-| [Grok Build CLI](grok-cli/) | CLI/TUI | supported (process token via `multi-cli auth set`) | supported | supported |
-
-Each tool has its own folder at the repo root with an `adapter.json` describing the account boundary, the shared normal state, and the per-OS support status.
-
----
+[Install](#install) · [Quick start](#quick-start) · [Supported tools](#supported-tools) · [Commands](#commands) · [Isolation](#how-isolation-works) · [Move sessions](#move-sessions-between-accounts) · [Troubleshooting](#troubleshooting) · [Uninstall](#uninstall)
 
 ## Install
 
-**macOS / Linux**
+Use the platform install script below, or download a packaged archive from [GitHub Releases](https://github.com/Spielewoy/multi-cli/releases).
+
+### macOS and Linux
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Spielewoy/multi-cli/main/scripts/install.sh | bash
 ```
 
-**Windows** — open PowerShell:
+### Windows
+
+Open PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/Spielewoy/multi-cli/main/scripts/install.ps1 | iex
 ```
 
-> After install, **restart your terminal** for PATH changes to take effect.
+The installer clones or updates Multi-CLI and installs `jq` if needed. Rerun the same command to update. Restart your terminal after installation. On macOS and Linux, follow the printed PATH instruction if one appears.
 
-### From source
+<details>
+<summary><strong>Install from source</strong></summary>
 
 ```bash
 git clone https://github.com/Spielewoy/multi-cli.git
 cd multi-cli
-./scripts/install.sh --local        # macOS/Linux
-.\scripts\install.ps1 -Local        # Windows
+./scripts/install.sh --local
 ```
 
-> After install, **restart your terminal** for PATH changes to take effect.
+Windows PowerShell:
 
-> [jq](https://jqlang.github.io/jq/) is **installed automatically** by the installer on all platforms — no manual setup required.
+```powershell
+git clone https://github.com/Spielewoy/multi-cli.git
+cd multi-cli
+.\scripts\install.ps1 -Local
+```
 
----
+</details>
 
-## Quick Start
+Requirements: Git, an internet connection, Bash on macOS or Linux, or PowerShell on Windows. The installer resolves the required `jq` binary automatically when possible.
+
+## Quick start
 
 ```bash
-# Create a profile
-multi-cli new claude-cli/work
+# Check your setup and discover installed tools
+multi-cli doctor
+multi-cli tools
 
-# Launch it
+# Create and launch a profile
+multi-cli new claude-cli/work
 multi-cli launch claude-cli/work
 
-# Or use the shorthand
+# Launch shorthand
 multi-cli claude-cli/work
 ```
 
-Each profile gets an automatic shell alias:
+By default, credentials stay inside the profile while supported settings, conversations, agents, skills, and plugins remain shared. Add `--isolated` when the whole tool home must be separate.
 
-| Platform | Location |
-|----------|----------|
-| macOS / Linux | `~/MultiCliProfiles/bin/` (add to `PATH`) |
-| Windows | CLI aliases in `~/MultiCliProfiles/bin/`; Start Menu shortcuts for GUI profiles |
+## Supported tools
 
----
+| Tool | Adapter | Platforms | Account boundary |
+|---|---|---|---|
+| AGY CLI | `agy-cli` | Windows | OS user |
+| Antigravity | `antigravity` | Windows | OS user |
+| Claude Code | `claude-cli` | Windows, Linux, macOS API keys | File overlay |
+| Codex CLI | `codex` | Windows, macOS, Linux | File overlay |
+| Codex Desktop | `codex-gui` | Windows | OS user |
+| Command Code | `commandcode` | Windows, macOS, Linux | File overlay |
+| GitHub Copilot CLI | `copilot-cli` | Windows, macOS, Linux | Process secret |
+| GitHub Copilot in VS Code | `copilot-vscode` | Windows | OS user |
+| Cursor CLI | `cursor-cli` | Windows, macOS, Linux | Process secret |
+| Cursor Desktop | `cursor` | Windows, macOS, Linux | Isolated tool home |
+| Gemini CLI | `gemini-cli` | Windows, macOS, Linux | File overlay |
+| Grok Build CLI | `grok-cli` | Windows, macOS, Linux | Process secret |
+| Kimi Code CLI | `kimi-cli` | Windows, macOS, Linux | Process secret |
+| Kiro | `kiro` | Windows, macOS, Linux | OS user or isolated tool home |
+| OpenCode | `opencode` | Windows, macOS, Linux | Isolated tool home |
+| Windsurf | `windsurf` | Windows, macOS, Linux | OS user or isolated tool home |
+| Zed | `zed` | Windows | OS user |
+
+Platform requirements and known limits are documented in the [support matrix](docs/support-matrix.md). Run `multi-cli tools` to see what is available on your machine.
 
 ## Commands
 
-### Profile Management
+### Profiles
 
-| Command | Description |
-|---------|-------------|
+| Command | Action |
+|---|---|
 | `multi-cli new <tool>/<name>` | Create an account profile (credentials separate; normal state shared) |
-| `multi-cli new <tool>/<name> --isolated` | Fully isolated schema-v2 profile — shares nothing (whole tool root inside the profile) |
-| `multi-cli new <tool>/<name> --shared` | Legacy schema-v1 shared profile; schema-v2 profiles already share declared normal state by default |
-| `multi-cli new <tool>/<name> --from <tpl>` | Create from a saved template |
-| `multi-cli <tool>/<name>` | Launch a profile (shorthand) |
-| `multi-cli launch <tool>/<name>` | Launch a profile |
-| `multi-cli list [<tool>]` | List all profiles |
-| `multi-cli status` | List profiles with their type and disk size |
-| `multi-cli clone <tool>/<src> <tool>/<dest>` | Copy an existing profile |
+| `multi-cli new <tool>/<name> --isolated` | Create a whole-root isolated profile; aliases: `--isolate`, `-i` |
+| `multi-cli new <tool>/<name> --from <template>` | Create a profile from a saved template |
+| `multi-cli <tool>/<name>` | Launch a profile |
+| `multi-cli launch <tool>/<name> [-- args...]` | Launch and pass arguments to the tool |
+| `multi-cli list [<tool>]` | List profiles |
+| `multi-cli clone <tool>/<src> <tool>/<dest>` | Copy a profile |
 | `multi-cli rename <tool>/<old> <tool>/<new>` | Rename a profile |
-| `multi-cli delete <tool>/<name>` | Delete a profile and all its data |
+| `multi-cli delete <tool>/<name>` | Delete a profile after confirmation |
 
-### Account Authentication & Migration
+### Credentials and portability
 
-| Command | Description |
-|---------|-------------|
-| `multi-cli auth set <tool>/<profile>` | Store the profile's process-secret credential in the OS credential store (prompts interactively, or reads one line from stdin) |
-| `multi-cli auth status <tool>/<profile>` | Report whether a credential is stored for the profile |
-| `multi-cli auth clear <tool>/<profile>` | Remove the stored credential |
-| `multi-cli migrate <tool>/<name> [--dry-run] [--prefer-profile]` | Migrate a legacy schema-v1 profile to schema-v2 |
+| Command | Action |
+|---|---|
+| `multi-cli auth set <tool>/<profile>` | Store a process secret in the OS credential store |
+| `multi-cli auth status <tool>/<profile>` | Check whether that secret exists |
+| `multi-cli auth clear <tool>/<profile>` | Remove that secret |
+| `multi-cli continue <tool> <src> <dest> [--dry-run] [--no-merge]` | Copy supported session state, never credentials |
+| `multi-cli template save <tool>/<profile> <name>` | Save a credential-free template |
+| `multi-cli template list \| delete <name>` | List or delete templates |
+| `multi-cli export <tool>/<name> [path]` | Export a profile |
+| `multi-cli import <archive> <tool>/<name>` | Import a profile |
 
-`auth` applies only to adapters that use the `processSecret` mechanism (`cursor-cli`, `copilot-cli`, `kimi-cli`, `grok-cli`). Launch stays disabled until a credential is stored. See [Legacy Profiles](#legacy-profiles) for `migrate`.
+### Maintenance
 
-### Templates
+| Command | Action |
+|---|---|
+| `multi-cli migrate <tool>/<name> [--dry-run] [--prefer-profile]` | Migrate a legacy profile to schema v2 |
+| `multi-cli status` | Show profiles and sizes |
+| `multi-cli stats` | Show profile storage use |
+| `multi-cli doctor [--deep]` | Diagnose setup and optionally audit runtimes |
+| `multi-cli completion {bash\|zsh\|powershell}` | Print shell completion setup |
+| `multi-cli help` | Show every command |
+| `multi-cli version` | Show the installed version |
 
-| Command | Description |
-|---------|-------------|
-| `multi-cli template save <tool>/<profile> <name>` | Save a profile as a reusable template |
-| `multi-cli template list` | List saved templates |
-| `multi-cli template delete <name>` | Remove a template |
+## How isolation works
 
-### Backup & Transfer
+| Mode | What stays separate | What stays shared |
+|---|---|---|
+| File overlay | Declared credential files | Native configuration and conversations |
+| Process secret | One credential injected into the child process | The tool's normal state |
+| OS user | The product's fixed OS credential identity | Nothing unless the adapter declares it |
+| Isolated tool home | The entire tool home | Nothing |
 
-| Command | Description |
-|---------|-------------|
-| `multi-cli export <tool>/<name> [path]` | Archive a profile to `.tar.gz` (`.zip` on Windows) |
-| `multi-cli import <archive> <tool>/<name>` | Restore a profile from an archive |
+Account profiles use the narrowest safe boundary. `--isolated` uses a separate tool home and shares nothing. Products tied to a fixed OS credential identity use a Multi-CLI-owned Windows user and require an elevated terminal.
 
-### Sessions
-
-| Command | Description |
-|---------|-------------|
-| `multi-cli continue <tool> <src> <dest>` | Copy conversation state (sessions/transcripts/history) from one profile to another — never credentials |
-| `multi-cli continue <tool> <src> <dest> --no-merge` | Overwrite destination files instead of keeping newer ones |
-| `multi-cli continue <tool> <src> <dest> --dry-run` | Preview what would be copied, change nothing |
-
-`base` works as a profile name on either end and means the tool's real home dir (`~/.codex`, `~/.claude`, …). Supported for `codex`, `claude-cli`, `gemini-cli`, and `commandcode`. See [Continue a Chat Across Accounts](#continue-a-chat-across-accounts).
-
-### Utilities
-
-| Command | Description |
-|---------|-------------|
-| `multi-cli tools` | List all supported tools and their install status |
-| `multi-cli stats` | Show disk usage per profile |
-| `multi-cli doctor` | Diagnose your environment |
-| `multi-cli completion {bash\|zsh\|powershell}` | Set up shell tab-completion |
-| `multi-cli help` | Show help |
-| `multi-cli version` | Show version |
-
----
-
-## How Isolation Works
-
-Schema-v2 adapters declare an account mechanism separately from normal state:
-
-| Mechanism | How it works |
-|-----------|--------------|
-| `fileOverlay` | Credentials stay under the profile; declared normal state links to the native shared tool home. |
-| `processSecret` | A per-profile, highest-precedence credential is injected into only the child process. Launch remains disabled until secure secret storage is configured. |
-| `osUserCredentialStore` | Fixed keychain identities are separated with a multi-cli-owned OS user. Provisioning requires an elevated terminal on Windows. |
-| `inseparable` | The vendor combines auth and normal state; compliant launch fails closed and the limitation is shown. |
-
-Version-1 profiles retain the earlier whole-root `env`, `userDataDir`, `redirectHome`, `appdata`, and `sandboxUser` behavior for compatibility. Each `<id>/adapter.json` states product/platform capabilities and per-OS support status.
-
----
-
-## Shared vs Isolated Profiles
-
-Profiles are **shared** by default: account credentials are separate, while conversations, configuration, and skills use the tool's normal shared location. `--isolated` puts the tool's entire home/config directory inside the profile, so nothing is shared. Isolated profiles can still be used with `continue` to copy supported conversations between accounts. For tools whose login cannot be split from normal state, `--isolated` is the direct whole-root option and avoids creating a separate OS user.
+Process-secret adapters require one extra step before launch:
 
 ```bash
-multi-cli new codex/acme --isolated   # CODEX_HOME is the profile dir; ~/.codex is never touched
+multi-cli new cursor-cli/work
+multi-cli auth set cursor-cli/work
+multi-cli cursor-cli/work
 ```
 
----
-
-<a id="continue-a-chat-across-accounts"></a>
-
-## Continue a Chat Across Accounts
-
-Hit a rate limit on account A mid-conversation? Switch to a profile logged into account B and pick the chat up where it stopped. `multi-cli continue` copies the portable conversation state — sessions, transcripts, history — between profiles. **Credentials are never copied.**
+Profiles created by earlier Multi-CLI versions keep their original whole-root behavior. Preview migration with:
 
 ```bash
-# You were working in codex/work (account A) and got rate-limited.
-# codex/personal is logged into account B.
-multi-cli continue codex work personal          # copy the conversation state
-multi-cli continue codex work personal --dry-run  # preview first, if you like
-
-codex-personal                                  # launch account B's profile
-codex resume <session-id>                        # resume the same chat (codex ≥ 0.30)
+multi-cli migrate codex/work --dry-run
 ```
 
-Run `codex resume` with no argument to open an interactive picker of past sessions, so you never have to look up an id. If you do need it, the session id is the UUID in the rollout filename under `sessions/YYYY/MM/DD/`.
+## Move sessions between accounts
 
-`base` is a valid profile name on either end and refers to the tool's real home dir (`~/.codex`, `~/.claude`, …), so you can continue to or from your default install.
+Copy supported conversation state when one account reaches a limit:
 
-By default, files are **merged** — newer files in the destination are kept. Pass `--no-merge` to overwrite the destination instead, or `--dry-run` to preview without changing anything.
+```bash
+multi-cli continue codex work personal --dry-run
+multi-cli continue codex work personal
+multi-cli codex/personal
+codex resume
+```
 
-After copying, resume inside the destination profile with the tool's own command:
+`base` refers to the tool's normal home, so either side can be a profile or the default installation. Credentials are never copied. Session transfer is supported for `codex`, `claude-cli`, `gemini-cli`, and `commandcode`.
 
-| Tool | Resume command |
-|------|----------------|
-| codex | `codex resume <session-id>` (≥ 0.30) |
-| claude-cli | `claude --resume <session-id>` (run from the same project directory) |
-| gemini-cli | `gemini --resume` (auto-saved last session) or `/chat resume <tag>` for saved checkpoints |
-| commandcode | launch from the same working directory |
+## Shell aliases
 
-**Not supported:** `opencode` (sessions and credentials live in one shared SQLite database) and `cursor` (chats are stored in SQLite keyed to the workspace path).
+Each profile gets a shortcut such as `claude-cli-work`.
 
-> Legacy schema-v1 profiles are seeded from `base` by default. Schema-v2 account profiles already read declared conversations and configuration from the shared native root; isolated profiles start empty. Use `multi-cli continue` to copy supported conversations into or out of an isolated profile.
+| Platform | Location |
+|---|---|
+| macOS and Linux | `~/MultiCliProfiles/bin/` |
+| Windows | `~/MultiCliProfiles/bin/`, plus Start Menu shortcuts for GUI profiles |
 
----
-
-## Profile Types
-
-| Flag | Meaning |
-|------|---------|
-| *(none)* | **Account profile** — separate credentials with declared conversations/config shared through the native tool root. |
-| `--isolated`, `--isolate`, `-i` | **Whole-root isolated** — shares nothing with the native tool root. |
-| `--shared` | **Legacy shared profile** — links settings/extensions for schema-v1 adapters; cannot be combined with `--isolated`. |
-| `--cli` | **CLI** — marks the profile for terminal-only launch (skips GUI discovery). |
-| `--from <tpl>` | Create from a validated, credential-free template. |
-
----
-
-## Environment Variables
+## Configuration
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
-| `MULTICLI_HOME` | `~/MultiCliProfiles` | Where all profiles are stored |
-| `MULTICLI_OVERRIDE_BINARY` | *(unset)* | Force a specific binary path for the next launch |
-| `MULTICLI_REPO` | *(unset)* | Git URL for remote install |
-| `MULTICLI_PLATFORM` | *(auto)* | Override platform detection (`darwin`, `linux`) |
+|---|---|---|
+| `MULTICLI_HOME` | `~/MultiCliProfiles` | Profile storage |
+| `MULTICLI_OVERRIDE_BINARY` | unset | Override binary discovery for one launch |
+| `MULTICLI_REPO` | GitHub repository | Override the install source |
+| `MULTICLI_INSTALL_DIR` | platform default | Override the installation directory |
 
----
-
-## Legacy Profiles
-
-Profiles created before schema-v2 are legacy whole-root profiles: they keep the earlier `env`, `userDataDir`, `redirectHome`, `appdata`, and `sandboxUser` behavior for compatibility. A profile directory without a `.profile.json` file is treated as legacy.
-
-`multi-cli migrate <tool>/<name>` converts a legacy profile to schema-v2: declared credentials move into the profile, and declared normal state links to the shared tool home. Use `--dry-run` to preview the move plan without changing anything, and `--prefer-profile` to replace conflicting shared files with the profile's copy — credential targets are never overwritten. Profile storage and the shared state root must be on the same volume, because migration uses atomic same-volume moves.
-
----
-
-## Diagnostics
+## Troubleshooting
 
 ```bash
 multi-cli doctor
+multi-cli doctor --deep
+multi-cli tools
 ```
 
-Checks that your profile storage exists, alias directory is in PATH, and each tool's binary is detected (or shows an install hint).
-
----
-
-## Shell Completion
-
-```bash
-multi-cli completion bash   # or zsh, powershell
-```
-
-Follow the instructions to add it to your `.zshrc`, `.bashrc`, or PowerShell `$PROFILE`.
-
----
+Restart the terminal if `multi-cli` or a new profile alias is not found after installation. The [support matrix](docs/support-matrix.md) covers product-specific requirements.
 
 ## Uninstall
 
-**macOS / Linux**
+macOS and Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Spielewoy/multi-cli/main/scripts/uninstall.sh | bash
 ```
 
-**Windows**
+Windows PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/Spielewoy/multi-cli/main/scripts/uninstall.ps1 | iex
 ```
 
-You'll be asked whether to remove your profile data — nothing is deleted without confirmation.
-
----
+Profile data is preserved unless you confirm its removal.
 
 ## Links
 
-- [Support matrix](docs/support-matrix.md) — per-product, per-OS isolation status and mode requirements
-- [Security policy](SECURITY.md)
-- [License](LICENSE)
-- [GitHub repository](https://github.com/Spielewoy/multi-cli)
-
----
-
-## Credits
-
-- **Creator** — [Spielewoy](https://github.com/Spielewoy)
-
----
+- [Support matrix](docs/support-matrix.md)
+- [Security policy](docs/SECURITY.md)
+- [Contributing](docs/CONTRIBUTING.md)
+- [Support](docs/SUPPORT.md)
+- [GitHub Releases](https://github.com/Spielewoy/multi-cli/releases)
 
 ## License
 

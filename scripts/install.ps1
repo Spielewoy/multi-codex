@@ -20,6 +20,19 @@ function Test-Command {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Assert-NativeSuccess {
+    param([string]$Action)
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Action failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Test-UserPathEntry {
+    param([string]$Path, [string]$Entry)
+    if (-not $Path) { return $false }
+    return @($Path -split ';' | Where-Object { $_ }) -contains $Entry
+}
+
 # jq is a hard dependency: multi-cli is entirely jq-driven. Resolve it or fail.
 function Install-Jq {
     param([string]$BinDir)
@@ -82,23 +95,28 @@ if ($Local) {
     $InstallDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
     Write-Host "Installing from local directory: $InstallDir"
 } else {
-    if ($RepoUrl -match '<owner>') {
-        Write-Host "Error: MULTICLI_REPO is not set. Set it to the git clone URL." -ForegroundColor Red
-        Write-Host '  $env:MULTICLI_REPO = "https://github.com/youruser/multi-cli"'
-        exit 1
+    if ($RepoUrl -match '<owner>|<repo>') {
+        throw 'MULTICLI_REPO contains a placeholder. Set it to the multi-cli Git clone URL.'
     }
+    if (-not (Test-Command 'git')) { throw 'git is required to install multi-cli from GitHub.' }
     Write-Host "Cloning from $RepoUrl ..."
     if (Test-Path (Join-Path $InstallDir '.git')) {
         Write-Host "Updating existing installation at $InstallDir"
         git -C $InstallDir pull --ff-only
+        Assert-NativeSuccess -Action 'git pull'
     } else {
         if (Test-Path $InstallDir) {
-            Write-Host "Found non-git directory at $InstallDir - removing for a clean clone."
-            Remove-Item -Recurse -Force $InstallDir
+            throw "$InstallDir exists but is not a Git checkout. Move it, choose MULTICLI_INSTALL_DIR, or use -Local from a multi-cli checkout."
         }
         New-Item -ItemType Directory -Force -Path (Split-Path $InstallDir) | Out-Null
         git clone $RepoUrl $InstallDir
+        Assert-NativeSuccess -Action 'git clone'
     }
+}
+
+$scriptPath = Join-Path $InstallDir 'multi-cli.ps1'
+if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+    throw "$InstallDir does not contain the multi-cli PowerShell entrypoint."
 }
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -106,7 +124,6 @@ New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 Install-Jq -BinDir $BinDir
 
 $wrapperPath = Join-Path $BinDir 'multi-cli.cmd'
-$scriptPath  = Join-Path $InstallDir 'multi-cli.ps1'
 @"
 @echo off
 powershell.exe -ExecutionPolicy Bypass -File "$scriptPath" %*
@@ -117,7 +134,7 @@ Write-Host "Installed multi-cli to $InstallDir"
 Write-Host "Command wrapper at $wrapperPath"
 
 $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-if ($userPath -notlike "*$BinDir*") {
+if (-not (Test-UserPathEntry -Path $userPath -Entry $BinDir)) {
     Write-Host ""
     Write-Host "Adding $BinDir to user PATH ..."
     [Environment]::SetEnvironmentVariable('PATH', "$BinDir;$userPath", 'User')
@@ -129,7 +146,7 @@ if ($userPath -notlike "*$BinDir*") {
 
 $ProfilesBinDir = if ($env:MULTICLI_HOME) { Join-Path $env:MULTICLI_HOME 'bin' } else { Join-Path $env:USERPROFILE 'MultiCliProfiles\bin' }
 $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-if ($userPath -notlike "*$ProfilesBinDir*") {
+if (-not (Test-UserPathEntry -Path $userPath -Entry $ProfilesBinDir)) {
     Write-Host ""
     Write-Host "Adding $ProfilesBinDir to user PATH ..."
     [Environment]::SetEnvironmentVariable('PATH', "$ProfilesBinDir;$userPath", 'User')

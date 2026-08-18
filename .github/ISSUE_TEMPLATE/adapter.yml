@@ -1,0 +1,43 @@
+name: Adapter request
+description: Request support for another coding CLI or IDE
+title: "[Adapter]: "
+labels:
+  - "type: adapter"
+  - "status: needs triage"
+body:
+  - type: input
+    id: product
+    attributes:
+      label: Product
+      placeholder: Product name and official website
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Authentication documentation
+      description: Link to the vendor's current authentication or configuration documentation.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Known account boundary
+      description: Where does the product store credentials, sessions, and normal configuration?
+    validations:
+      required: true
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Platforms
+      options:
+        - label: Windows
+        - label: macOS
+        - label: Linux
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Concurrent use case
+      description: Explain why two or more accounts must run at the same time.
+    validations:
+      required: true

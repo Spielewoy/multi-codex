@@ -20,12 +20,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: vendor-e2e-${{ inputs.tool }}
+  cancel-in-progress: false
+
 jobs:
   offline-real-binary:
     runs-on: [self-hosted, windows, multi-cli-vendor-test]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Run real binary offline smoke
         shell: powershell
         run: >-
@@ -34,7 +38,7 @@ jobs:
           -Tool '${{ inputs.tool }}'
           -EvidenceDirectory "$env:RUNNER_TEMP\multi-cli-evidence"
       - name: Upload secret-scanned evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: vendor-smoke-${{ inputs.tool }}
           path: ${{ runner.temp }}\multi-cli-evidence\${{ inputs.tool }}-offline.json

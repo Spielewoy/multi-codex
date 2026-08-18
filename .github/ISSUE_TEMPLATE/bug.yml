@@ -1,0 +1,79 @@
+name: Bug report
+description: Report reproducible Multi-CLI behavior
+title: "[Bug]: "
+labels:
+  - "type: bug"
+  - "status: needs triage"
+body:
+  - type: markdown
+    attributes:
+      value: Check existing issues and remove all credentials, account identifiers, and private paths before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Multi-CLI version
+      placeholder: multi-cli version
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: shell
+    attributes:
+      label: Shell and version
+      placeholder: PowerShell 7.5, Bash 5.2, or Zsh 5.9
+    validations:
+      required: true
+  - type: input
+    id: adapter
+    attributes:
+      label: Tool or adapter
+      placeholder: codex, claude-cli, cursor, or not adapter-specific
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: List the shortest commands that reproduce the problem.
+      placeholder: |
+        1. Run ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste relevant doctor output or logs after removing secrets and private data.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed tokens, credentials, account identifiers, and private paths.
+          required: true
+        - label: I checked for an existing issue.
+          required: true
