@@ -698,6 +698,9 @@ function Get-StorageLinkTarget {
     if ($linkType -ne 'Junction' -and $linkType -ne 'SymbolicLink') { return $null }
     $target = @((Get-ObjectPropertySafe -Object $item -Name 'Target'))[0]
     if (-not $target) { return $null }
+    if (-not [System.IO.Path]::IsPathRooted($target)) {
+        $target = Join-Path (Split-Path -Parent $Path) $target
+    }
     return Get-StorageCanonical -Path $target
 }
 
@@ -754,6 +757,11 @@ function Throw-LegacyTransferBlocked {
     throw "Cannot $Action '$Spec': legacy profile transfer is disabled because whole-root copies can leak tokens. Migrate the legacy profile first: multi-cli migrate $Spec"
 }
 
+function Throw-LegacyTemplateApplyBlocked {
+    param([string]$Spec, [string]$TemplateName)
+    throw "Cannot create '$Spec' from template '$TemplateName': legacy template application is disabled because old on-disk templates can contain credentials. Recreate the template from a migrated schema-v2 profile."
+}
+
 # =============================================================================
 # Profile CRUD
 # =============================================================================
@@ -806,7 +814,7 @@ function New-Profile {
             New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
             Apply-MultiCliTemplate -TemplateDir $tplDir -Adapter $adapter -ProfileDir $profileDir -Isolated:$Isolated
         } else {
-            Copy-Item -Path $tplDir -Destination $profileDir -Recurse
+            Throw-LegacyTemplateApplyBlocked -Spec $Spec -TemplateName $FromTemplate
         }
     } elseif ($Shared) {
         New-SharedProfile -Adapter $adapter -ProfileDir $profileDir
@@ -1018,7 +1026,7 @@ function Copy-ProfileTo {
             Initialize-RuntimeProfile -Adapter $adapter -ProfileDir $destDir
         }
     } else {
-        Copy-Item -Path $srcDir -Destination $destDir -Recurse
+        Throw-LegacyTransferBlocked -Action 'clone' -Spec $SrcSpec
     }
     New-AliasScript -Tool $b.Tool -Name $b.Name
     New-StartMenuShortcut -Tool $b.Tool -Name $b.Name -Adapter $adapter | Out-Null
@@ -1691,15 +1699,7 @@ function Invoke-Import {
         Import-Module (Resolve-MultiCliModulePath 'MultiCli.Transfer.psm1') -Force
         Import-MultiCliProfile -Adapter $adapter -ArchivePath $ArchivePath -DestinationDir $destDir
     } else {
-        $tmp = Join-Path $env:TEMP "multicli_import_$(Get-Random)"
-        Expand-Archive -Path $ArchivePath -DestinationPath $tmp -Force
-        $top = Get-ChildItem -Directory -Path $tmp
-        if ($top.Count -eq 1) {
-            Move-Item -Path $top[0].FullName -Destination $destDir
-            Remove-Item $tmp -Recurse -Force
-        } else {
-            Move-Item -Path $tmp -Destination $destDir
-        }
+        Throw-LegacyTransferBlocked -Action 'import into' -Spec $Spec
     }
     New-AliasScript -Tool $p.Tool -Name $p.Name
     New-StartMenuShortcut -Tool $p.Tool -Name $p.Name -Adapter $adapter | Out-Null

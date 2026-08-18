@@ -20,7 +20,7 @@ jobs:
       contents: read
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Verify tag and embedded versions
         shell: bash
@@ -73,7 +73,7 @@ jobs:
       id-token: write
     steps:
       - name: Check out release notes
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Download release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093

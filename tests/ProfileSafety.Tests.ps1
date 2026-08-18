@@ -229,6 +229,16 @@ function Write-ProfileFixtureAdapter {
     $adapter | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Scratch.Tools 'fixture\adapter.json') -Encoding UTF8
 }
 
+function Write-LegacyProfileFixtureAdapter {
+    param($Scratch, [string]$Id = 'legacycli')
+    $adapterDir = Join-Path $Scratch.Tools $Id
+    New-Item -ItemType Directory -Force -Path $adapterDir | Out-Null
+    $json = @'
+{"id":"LEGACY_ID","displayName":"Legacy CLI","kind":"cli","binary":{"windows":["legacy.exe"],"macos":["legacy"],"linux":["legacy"]},"isolation":{"strategy":"env","env":{"LEGACY_HOME":"{profileDir}"}},"share":{"systemHome":"$HOME/.legacy","linkable":["config.toml"],"neverLink":["auth.json"]},"session":{"portable":true,"paths":["sessions"],"credentials":["auth.json"]},"status":"legacy-test"}
+'@.Replace('LEGACY_ID', $Id)
+    Set-Content -LiteralPath (Join-Path $adapterDir 'adapter.json') -Value $json -Encoding UTF8
+}
+
 function Invoke-ProfileFixtureLauncher {
     param($Scratch, [string[]]$Arguments, [string]$Probe)
     $environment = @{
@@ -343,6 +353,37 @@ Describe 'profile path containment and legacy transfer hardening' {
         }
     }
 
+    It 'refuses export when a valid tool directory is a relative symlink outside MULTICLI_HOME' {
+        $scratch = New-ProfileFixtureScratch
+        $toolLink = Join-Path $scratch.Profiles 'fixture'
+        $outsideRoot = Join-Path $scratch.Root 'outside-relative-fixture'
+        $archive = Join-Path $scratch.Root 'relative-escape.zip'
+        try {
+            Write-ProfileFixtureAdapter -Scratch $scratch
+            New-Item -ItemType Directory -Force -Path (Join-Path $outsideRoot 'account-a') | Out-Null
+            Set-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Value 'outside-data' -Encoding ASCII
+            $made = $true
+            try {
+                New-Item -ItemType SymbolicLink -Path $toolLink -Target '..\outside-relative-fixture' -ErrorAction Stop | Out-Null
+            } catch { $made = $false }
+            if (-not $made) {
+                Write-Host 'Host cannot create symlinks; this capability-specific assertion was not exercised.'
+                return
+            }
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('export', 'fixture/account-a', $archive)
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'outside MULTICLI_HOME'
+            (Test-Path -LiteralPath $archive) | Should Be $false
+            (Get-Content -LiteralPath (Join-Path $outsideRoot 'account-a\keep.txt') -Raw).Trim() | Should Be 'outside-data'
+        } finally {
+            if (Test-Path -LiteralPath $toolLink) { [System.IO.Directory]::Delete($toolLink) }
+            Remove-Item -LiteralPath $outsideRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'refuses template save for legacy whole-root profiles before any token files can travel' {
         $scratch = New-ProfileFixtureScratch
         try {
@@ -381,6 +422,68 @@ Describe 'profile path containment and legacy transfer hardening' {
             $result.Output | Should Match 'legacy profile'
             $result.Output | Should Match 'multi-cli migrate fixture/legacy'
             (Test-Path -LiteralPath $archive) | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses legacy template application before old on-disk templates can recreate credentials' {
+        $scratch = New-ProfileFixtureScratch
+        try {
+            Write-LegacyProfileFixtureAdapter -Scratch $scratch
+            $templateDir = Join-Path $scratch.Profiles '.templates\tpl'
+            New-Item -ItemType Directory -Force -Path $templateDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $templateDir 'config.toml') -Value 'model = "gpt-5"' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $templateDir 'auth.json') -Value '{"access_token":"tok"}' -Encoding ASCII
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('new', 'legacycli/work', '--from', 'tpl')
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'legacy template application is disabled'
+            $result.Output | Should Match "template 'tpl'"
+            (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'legacycli\work')) | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses clone for legacy whole-root profiles before tokens can travel' {
+        $scratch = New-ProfileFixtureScratch
+        try {
+            Write-LegacyProfileFixtureAdapter -Scratch $scratch
+            $source = Join-Path $scratch.Profiles 'legacycli\source'
+            New-Item -ItemType Directory -Force -Path $source | Out-Null
+            Set-Content -LiteralPath (Join-Path $source 'config.toml') -Value 'model = "gpt-5"' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $source 'mcp-oauth-tokens.json') -Value '{"access_token":"tok"}' -Encoding ASCII
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('clone', 'legacycli/source', 'legacycli/dest')
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'legacy profile transfer is disabled'
+            $result.Output | Should Match 'multi-cli migrate legacycli/source'
+            (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'legacycli\dest')) | Should Be $false
+        } finally {
+            Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses import for legacy whole-root archives before tokens can travel' {
+        $scratch = New-ProfileFixtureScratch
+        try {
+            Write-LegacyProfileFixtureAdapter -Scratch $scratch
+            $archiveRoot = Join-Path $scratch.Root 'legacy-archive'
+            $archive = Join-Path $scratch.Root 'legacy.zip'
+            New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $archiveRoot 'config.toml') -Value 'model = "gpt-5"' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $archiveRoot 'auth.json') -Value '{"access_token":"tok"}' -Encoding ASCII
+            Compress-Archive -Path (Join-Path $archiveRoot '*') -DestinationPath $archive -Force
+
+            $result = Invoke-ProfileFixtureLauncher -Scratch $scratch -Arguments @('import', $archive, 'legacycli/work')
+
+            $result.ExitCode | Should Be 1
+            $result.Output | Should Match 'legacy profile transfer is disabled'
+            $result.Output | Should Match 'multi-cli migrate legacycli/work'
+            (Test-Path -LiteralPath (Join-Path $scratch.Profiles 'legacycli\work')) | Should Be $false
         } finally {
             Remove-Item -LiteralPath $scratch.Root -Recurse -Force -ErrorAction SilentlyContinue
         }

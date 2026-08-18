@@ -74,21 +74,3 @@ teardown() {
   [ ! -f "$pdir/history.jsonl" ]
   [ ! -e "$pdir/sessions" ]
 }
-
-# 16. new --from <template> skips seeding entirely.
-@test "new --from <template> skips base seeding" {
-  seed_codex_base
-  # Build a source profile and save it as a template.
-  multicli new codex/src --no-seed >/dev/null
-  printf '%s\n' 'from-template = true' > "$MULTICLI_HOME/codex/src/marker.toml"
-  multicli template save codex/src tmpl >/dev/null
-
-  run multicli new codex/fromtpl --from tmpl
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"Seeded from base"* ]]
-
-  local pdir="$MULTICLI_HOME/codex/fromtpl"
-  [ -f "$pdir/marker.toml" ]          # came from the template
-  [ ! -f "$pdir/history.jsonl" ]      # base seeding did not run
-  [ ! -e "$pdir/sessions" ]
-}
