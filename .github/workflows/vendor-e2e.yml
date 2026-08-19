@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tool:
-        description: Adapter id to verify on the protected Windows runner
+        description: AI tool id to verify on the protected Windows runner
         required: true
         type: choice
         options:
@@ -20,21 +20,29 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: vendor-e2e-${{ inputs.tool }}
+  cancel-in-progress: false
+
 jobs:
   offline-real-binary:
     runs-on: [self-hosted, windows, multi-cli-vendor-test]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Run real binary offline smoke
+        env:
+          MULTICLI_TOOL: ${{ inputs.tool }}
         shell: powershell
         run: >-
           powershell -NoProfile -ExecutionPolicy Bypass
           -File tests/e2e/windows/Invoke-VendorSmoke.ps1
-          -Tool '${{ inputs.tool }}'
+          -Tool "$env:MULTICLI_TOOL"
           -EvidenceDirectory "$env:RUNNER_TEMP\multi-cli-evidence"
       - name: Upload secret-scanned evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vendor-smoke-${{ inputs.tool }}
           path: ${{ runner.temp }}\multi-cli-evidence\${{ inputs.tool }}-offline.json

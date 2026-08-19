@@ -7,14 +7,14 @@
 # Absolute path to the repo root (parent of tests/).
 MULTICLI_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MULTICLI_BIN="$MULTICLI_REPO_ROOT/multi-cli"
-MULTICLI_VENDOR="$MULTICLI_REPO_ROOT/tests/vendor"
+MULTICLI_VENDOR="${MULTICLI_TEST_CACHE:-${TMPDIR:-/tmp}/multi-cli-test-tools}"
 
 # The pinned jq release used when bootstrapping a vendored binary on demand.
 MULTICLI_JQ_VERSION="jq-1.7.1"
 MULTICLI_JQ_BASE_URL="https://github.com/jqlang/jq/releases/download/$MULTICLI_JQ_VERSION"
 
 # Name of the jq release asset for the current OS/arch, and the local filename
-# it should be saved as in tests/vendor.
+# it should be saved as in the test-tool cache.
 _multicli_jq_asset() {
   local os arch
   os="$(uname -s 2>/dev/null || echo unknown)"
@@ -38,8 +38,8 @@ _multicli_jq_asset() {
   esac
 }
 
-# Download the pinned jq binary into tests/vendor when neither a system jq nor a
-# vendored binary exists. Keeps the suite single-command on a fresh machine.
+# Download the pinned jq binary into the test-tool cache when neither a system
+# jq nor a cached binary exists. Keeps the suite single-command on a fresh machine.
 _multicli_bootstrap_jq() {
   local asset local_name url dest
   read -r asset local_name <<<"$(_multicli_jq_asset)" || {
@@ -62,8 +62,8 @@ _multicli_bootstrap_jq() {
 }
 
 # Locate jq: prefer one already on PATH, otherwise the vendored static binary,
-# downloading the vendored binary on demand. The launcher hard-requires jq;
-# git-bash and minimal CI images often lack it, so we prepend vendor/.
+# downloading the cached binary on demand. The launcher hard-requires jq;
+# git-bash and minimal CI images often lack it, so we prepend the cache.
 ensure_jq_on_path() {
   if command -v jq >/dev/null 2>&1; then
     return 0
@@ -118,8 +118,30 @@ assert_same_path() {
     command -v cygpath >/dev/null 2>&1 || return 1
     left="$(cygpath -m "$left")"
     right="$(cygpath -m "$right")"
+  else
+    left="$(_multicli_canonicalize_path_for_compare "$left")"
+    right="$(_multicli_canonicalize_path_for_compare "$right")"
   fi
   [ "${left//\\//}" = "${right//\\//}" ]
+}
+
+_multicli_canonicalize_path_for_compare() {
+  local path="$1" probe="$1" suffix="" parent
+  while [ ! -e "$probe" ] && [ "$probe" != "/" ] && [ "$probe" != "$(dirname "$probe")" ]; do
+    suffix="/$(basename "$probe")$suffix"
+    parent="$(dirname "$probe")"
+    [ "$parent" != "$probe" ] || break
+    probe="$parent"
+  done
+  if [ -e "$probe" ]; then
+    if [ -d "$probe" ]; then
+      printf '%s%s\n' "$(cd "$probe" && pwd -P)" "$suffix"
+    else
+      printf '%s/%s%s\n' "$(cd "$(dirname "$probe")" && pwd -P)" "$(basename "$probe")" "$suffix"
+    fi
+    return 0
+  fi
+  printf '%s\n' "$path"
 }
 
 # --- Fixture builders (real files, real content) ---------------------------

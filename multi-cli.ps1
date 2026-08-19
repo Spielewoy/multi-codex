@@ -36,12 +36,12 @@ param (
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSION = '0.1.0'
+$VERSION = '1.0.0'
 $UTF8_BOM_BYTES = [byte[]](0xEF, 0xBB, 0xBF)
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $MultiCliLauncherPath = $MyInvocation.MyCommand.Definition
-$ToolsDir  = if ($env:MULTICLI_TOOLS_DIR) { $env:MULTICLI_TOOLS_DIR } else { $ScriptDir }
+$ToolsDir  = if ($env:MULTICLI_TOOLS_DIR) { $env:MULTICLI_TOOLS_DIR } else { Join-Path $ScriptDir 'ai-tools' }
 $BASE = if ($env:MULTICLI_HOME) { $env:MULTICLI_HOME } else { Join-Path $env:USERPROFILE 'MultiCliProfiles' }
 
 # Locate a lib module next to this launcher, falling back to the tools dir
@@ -96,6 +96,7 @@ function Get-Adapters {
 # Every command that touches adapter data goes through this first.
 function Get-Adapter {
     param([string]$ToolId)
+    Test-ToolId $ToolId
     Import-AdapterValidationModule
     $manifest = Join-Path (Join-Path $ToolsDir $ToolId) 'adapter.json'
     if (-not (Test-Path $manifest)) { throw "Unknown tool '$ToolId'. Run: multi-cli tools" }
@@ -653,7 +654,18 @@ function Split-ProfileSpec {
     if (-not $Spec) { throw "Profile required: <tool>/<name>" }
     if ($Spec -notmatch '/') { throw "Profile must be in form <tool>/<name>. Got: '$Spec'" }
     $parts = $Spec.Split('/', 2)
+    Test-ToolId $parts[0]
     return [pscustomobject]@{ Tool = $parts[0]; Name = $parts[1] }
+}
+
+# Throw unless $ToolId is a safe adapter id: alnum start, then alnum or
+# hyphen. This blocks traversal before adapter/profile paths are joined.
+function Test-ToolId {
+    param([string]$ToolId)
+    if ([string]::IsNullOrWhiteSpace($ToolId)) { throw 'Tool id required' }
+    if ($ToolId -notmatch '^[a-zA-Z0-9][a-zA-Z0-9-]*$') {
+        throw "Tool id '$ToolId' invalid: must start with alphanumeric, contain only letters/numbers/hyphens"
+    }
 }
 
 # Throw unless $Name is a safe profile/template name: alnum start, then alnum
@@ -666,10 +678,137 @@ function Test-ProfileName {
     }
 }
 
-function Get-ProfileDir { param([string]$Tool,[string]$Name) Join-Path (Join-Path $BASE $Tool) $Name }
-function Get-ToolProfilesDir { param([string]$Tool) Join-Path $BASE $Tool }
-function Get-AliasDir { Join-Path $BASE 'bin' }
-function Get-TemplatesDir { Join-Path $BASE '.templates' }
+function Get-StorageCanonical {
+    param([string]$Path)
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd('\', '/')
+}
+
+function Test-StoragePathWithin {
+    param([string]$Child, [string]$Root)
+    if (-not $Root) { return $false }
+    $prefix = $Root.TrimEnd('\', '/') + '\'
+    return ($Child.TrimEnd('\', '/') + '\').StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-StorageLinkInfo {
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $null }
+    $linkType = Get-ObjectPropertySafe -Object $item -Name 'LinkType'
+    if ($linkType -ne 'Junction' -and $linkType -ne 'SymbolicLink' -and $linkType -ne 'HardLink') { return $null }
+    $target = @((Get-ObjectPropertySafe -Object $item -Name 'Target'))[0]
+    if (-not $target) { return $null }
+    return [pscustomobject]@{ Item = $item; LinkType = $linkType; Target = $target }
+}
+
+function Get-StorageLinkTarget {
+    param([string]$Path)
+    $link = Get-StorageLinkInfo -Path $Path
+    if ($null -eq $link) { return $null }
+    $target = $link.Target
+    if (-not [System.IO.Path]::IsPathRooted($target)) {
+        $target = Join-Path (Split-Path -Parent $Path) $target
+    }
+    return Get-StorageCanonical -Path $target
+}
+
+function Assert-StoragePathSafe {
+    param([string]$Path, [string]$Label)
+    $baseCanonical = Get-StorageCanonical -Path $BASE
+    $candidateCanonical = Get-StorageCanonical -Path $Path
+    if (-not (Test-StoragePathWithin -Child $candidateCanonical -Root $baseCanonical)) {
+        throw "Refusing to access $Label outside MULTICLI_HOME: '$candidateCanonical'."
+    }
+    if ($candidateCanonical.Length -le $baseCanonical.Length) { return }
+    $relative = $candidateCanonical.Substring($baseCanonical.Length).TrimStart('\', '/')
+    if (-not $relative) { return }
+    $current = $baseCanonical
+    foreach ($segment in ($relative -split '[\\/]')) {
+        if (-not $segment) { continue }
+        $current = Join-Path $current $segment
+        if (-not (Test-Path -LiteralPath $current)) { break }
+        $target = Get-StorageLinkTarget -Path $current
+        if ($null -eq $target) { continue }
+        if (-not (Test-StoragePathWithin -Child $target -Root $baseCanonical)) {
+            throw "Refusing to access $Label because '$current' resolves outside MULTICLI_HOME."
+        }
+    }
+}
+
+function Resolve-StoragePath {
+    param([string]$Label, [string[]]$Segments)
+    $path = $BASE
+    foreach ($segment in @($Segments)) {
+        if ([string]::IsNullOrEmpty($segment)) { continue }
+        $path = Join-Path $path $segment
+    }
+    Assert-StoragePathSafe -Path $path -Label $Label
+    return $path
+}
+
+function Get-ProfileDir {
+    param([string]$Tool,[string]$Name)
+    Test-ToolId $Tool
+    Test-ProfileName $Name
+    return Resolve-StoragePath -Label "profile '$Tool/$Name'" -Segments @($Tool, $Name)
+}
+function Get-ToolProfilesDir {
+    param([string]$Tool)
+    Test-ToolId $Tool
+    return Resolve-StoragePath -Label "profile root for '$Tool'" -Segments @($Tool)
+}
+function Get-AliasDir { Resolve-StoragePath -Label 'alias directory' -Segments @('bin') }
+function Get-TemplatesDir { Resolve-StoragePath -Label 'template root' -Segments @('.templates') }
+
+function Throw-LegacyTransferBlocked {
+    param([string]$Action, [string]$Spec)
+    throw "Cannot $Action '$Spec': legacy profile transfer is disabled because whole-root copies can leak tokens. Migrate the legacy profile first: multi-cli migrate $Spec"
+}
+
+function Throw-LegacyTemplateApplyBlocked {
+    param([string]$Spec, [string]$TemplateName)
+    throw "Cannot create '$Spec' from template '$TemplateName': legacy template application is disabled because old on-disk templates can contain credentials. Recreate the template from a migrated schema-v2 profile."
+}
+
+function Remove-StorageTreeNoReparse {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Get-Item -LiteralPath $Path -Force
+    $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($isReparsePoint) {
+        if ($item.PSIsContainer) {
+            [System.IO.Directory]::Delete($item.FullName)
+        } else {
+            [System.IO.File]::Delete($item.FullName)
+        }
+        return
+    }
+    if ($item.PSIsContainer) {
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue) {
+            Remove-StorageTreeNoReparse -Path $child.FullName
+        }
+    }
+    Remove-Item -LiteralPath $item.FullName -Force
+}
+
+function Copy-StorageTreeNoReparse {
+    param([string]$Source, [string]$Destination)
+    if (-not (Test-Path -LiteralPath $Source)) { return }
+    $item = Get-Item -LiteralPath $Source -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Cannot clone '$Source': nested reparse points are not supported inside isolated profile state."
+    }
+    if ($item.PSIsContainer) {
+        New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue) {
+            Copy-StorageTreeNoReparse -Source $child.FullName -Destination (Join-Path $Destination $child.Name)
+        }
+        return
+    }
+    $parent = Split-Path -Parent $Destination
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    Copy-Item -LiteralPath $item.FullName -Destination $Destination -Force
+}
 
 # =============================================================================
 # Profile CRUD
@@ -723,7 +862,7 @@ function New-Profile {
             New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
             Apply-MultiCliTemplate -TemplateDir $tplDir -Adapter $adapter -ProfileDir $profileDir -Isolated:$Isolated
         } else {
-            Copy-Item -Path $tplDir -Destination $profileDir -Recurse
+            Throw-LegacyTemplateApplyBlocked -Spec $Spec -TemplateName $FromTemplate
         }
     } elseif ($Shared) {
         New-SharedProfile -Adapter $adapter -ProfileDir $profileDir
@@ -867,7 +1006,7 @@ function Remove-Profile {
             }
         }
     }
-    Remove-Item -Recurse -Force $profileDir
+    Remove-StorageTreeNoReparse -Path $profileDir
     Remove-AliasScript -Tool $p.Tool -Name $p.Name
     Remove-StartMenuShortcut -Tool $p.Tool -Name $p.Name
     Write-Host "Deleted profile '$Spec'"
@@ -919,23 +1058,28 @@ function Copy-ProfileTo {
                 $sourceState = Join-Path $srcDir ($runtimeSubdir -replace '/', '\')
                 $destinationState = Join-Path $destDir ($runtimeSubdir -replace '/', '\')
             }
-            foreach ($relativePath in @($normalState.sharedPaths) + @($normalState.sessionPaths)) {
-                if (-not $relativePath) { continue }
-                $source = Join-Path $sourceState ($relativePath -replace '/', '\')
-                if (-not (Test-Path -LiteralPath $source)) { continue }
-                $destination = Join-Path $destinationState ($relativePath -replace '/', '\')
-                $parent = Split-Path -Parent $destination
-                if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-                Copy-Item -LiteralPath $source -Destination $destination -Recurse
+            try {
+                foreach ($relativePath in @($normalState.sharedPaths) + @($normalState.sessionPaths)) {
+                    if (-not $relativePath) { continue }
+                    $source = Join-Path $sourceState ($relativePath -replace '/', '\')
+                    if (-not (Test-Path -LiteralPath $source)) { continue }
+                    $destination = Join-Path $destinationState ($relativePath -replace '/', '\')
+                    $parent = Split-Path -Parent $destination
+                    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+                    Copy-StorageTreeNoReparse -Source $source -Destination $destination
+                }
+                New-Item -ItemType File -Path (Join-Path $destDir '.isolated') | Out-Null
+                Write-IsolatedProfileMetadata -Adapter $adapter -ProfileDir $destDir
+            } catch {
+                Remove-StorageTreeNoReparse -Path $destDir
+                throw
             }
-            New-Item -ItemType File -Path (Join-Path $destDir '.isolated') | Out-Null
-            Write-IsolatedProfileMetadata -Adapter $adapter -ProfileDir $destDir
         } else {
             Import-RuntimeModule
             Initialize-RuntimeProfile -Adapter $adapter -ProfileDir $destDir
         }
     } else {
-        Copy-Item -Path $srcDir -Destination $destDir -Recurse
+        Throw-LegacyTransferBlocked -Action 'clone' -Spec $SrcSpec
     }
     New-AliasScript -Tool $b.Tool -Name $b.Name
     New-StartMenuShortcut -Tool $b.Tool -Name $b.Name -Adapter $adapter | Out-Null
@@ -1552,16 +1696,7 @@ function Invoke-Template {
                 Write-Host "Saved template '$B' from '$A'"
                 return
             }
-            $tplDir = Get-TemplatesDir
-            New-Item -ItemType Directory -Force -Path $tplDir | Out-Null
-            $dest = Join-Path $tplDir $B
-            if (Test-Path $dest) { throw "Template '$B' already exists" }
-            Copy-Item -Path $srcDir -Destination $dest -Recurse
-            foreach ($f in @('.shared', '.cli', '.isolated', 'auth.json', '.credentials.json', 'oauth_creds.json')) {
-                $strip = Join-Path $dest $f
-                if (Test-Path $strip) { Remove-Item -Recurse -Force $strip }
-            }
-            Write-Host "Saved template '$B' from '$A'"
+            Throw-LegacyTransferBlocked -Action 'save a template from' -Spec $A
         }
         'list' {
             $tplDir = Get-TemplatesDir
@@ -1597,8 +1732,7 @@ function Invoke-Export {
         Write-Host "Exported '$Spec' to $OutPath"
         return
     }
-    Compress-Archive -Path $srcDir -DestinationPath $OutPath -Force
-    Write-Host "Exported '$Spec' to $OutPath"
+    Throw-LegacyTransferBlocked -Action 'export' -Spec $Spec
 }
 
 # multi-cli import: schema-v2 archives are validated and re-identified by the
@@ -1618,15 +1752,7 @@ function Invoke-Import {
         Import-Module (Resolve-MultiCliModulePath 'MultiCli.Transfer.psm1') -Force
         Import-MultiCliProfile -Adapter $adapter -ArchivePath $ArchivePath -DestinationDir $destDir
     } else {
-        $tmp = Join-Path $env:TEMP "multicli_import_$(Get-Random)"
-        Expand-Archive -Path $ArchivePath -DestinationPath $tmp -Force
-        $top = Get-ChildItem -Directory -Path $tmp
-        if ($top.Count -eq 1) {
-            Move-Item -Path $top[0].FullName -Destination $destDir
-            Remove-Item $tmp -Recurse -Force
-        } else {
-            Move-Item -Path $tmp -Destination $destDir
-        }
+        Throw-LegacyTransferBlocked -Action 'import into' -Spec $Spec
     }
     New-AliasScript -Tool $p.Tool -Name $p.Name
     New-StartMenuShortcut -Tool $p.Tool -Name $p.Name -Adapter $adapter | Out-Null
@@ -1719,7 +1845,7 @@ function Show-Completion {
 Register-ArgumentCompleter -Native -CommandName multi-cli -ScriptBlock {
     param(`$wordToComplete, `$commandAst, `$cursorPosition)
     `$base = if (`$env:MULTICLI_HOME) { `$env:MULTICLI_HOME } else { Join-Path `$env:USERPROFILE 'MultiCliProfiles' }
-    `$tools = (Get-ChildItem -Directory '$ScriptDir' -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path `$_.FullName 'adapter.json') }).Name
+    `$tools = (Get-ChildItem -Directory '$ToolsDir' -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path `$_.FullName 'adapter.json') }).Name
     `$cmds = @('new','launch','continue','migrate','list','status','rename','delete','clone','template','export','import','tools','doctor','stats','completion','help','version')
     `$specs = @()
     foreach (`$t in `$tools) {

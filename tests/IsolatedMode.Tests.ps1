@@ -319,7 +319,7 @@ Describe 'schema-v2 isolated mode on Windows' {
         try {
             $commandCodeDir = Join-Path $scratch.Tools 'commandcode'
             New-Item -ItemType Directory -Force -Path $commandCodeDir | Out-Null
-            Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'commandcode\adapter.json') -Destination (Join-Path $commandCodeDir 'adapter.json')
+            Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'ai-tools\commandcode\adapter.json') -Destination (Join-Path $commandCodeDir 'adapter.json')
             $capture = Join-Path $scratch.Root 'commandcode-key.txt'
             $probeScript = Join-Path $scratch.Root 'capture-commandcode.ps1'
             '[Environment]::GetEnvironmentVariable(''COMMAND_CODE_API_KEY'', ''Process'') | Set-Content -LiteralPath $env:CAPTURE_OUTPUT -NoNewline' |

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+TEST_CACHE="${MULTICLI_TEST_CACHE:-${TMPDIR:-/tmp}/multi-cli-test-tools}"
 SCRATCH="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/multi-cli-osuser.XXXXXX")"
 PROFILE_HOME="$SCRATCH/profiles"
 OPERATOR_HOME="$SCRATCH/operator"
@@ -26,7 +27,7 @@ chmod 711 "$SCRATCH" "$PROFILE_HOME"
 export HOME="$OPERATOR_HOME"
 export USERPROFILE="$OPERATOR_HOME"
 export MULTICLI_HOME="$PROFILE_HOME"
-export PATH="$PROFILE_HOME/bin:$REPO_ROOT/tests/vendor:$PATH"
+export PATH="$PROFILE_HOME/bin:$TEST_CACHE:$PATH"
 export MULTICLI_OVERRIDE_BINARY=/usr/bin/env
 
 "$REPO_ROOT/multi-cli" new "$TOOL/$PROFILE" --no-seed >/dev/null

@@ -1,5 +1,8 @@
 # Normalize line endings by file type.
 * text=auto
+.gitattributes text eol=lf
+.simplecov text eol=lf
+release/VERSION text eol=lf
 
 # POSIX entrypoints and test sources.
 *.sh text eol=lf
@@ -17,8 +20,11 @@ multi-cli text eol=lf
 # Portable text formats.
 *.json text eol=lf
 *.md text eol=lf
+*.py text eol=lf
+*.svg text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 
 # Binary assets.
 *.icns binary
+*.png binary

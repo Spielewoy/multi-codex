@@ -31,7 +31,7 @@ setup() {
   # The REAL agy-cli adapter (osUserCredentialStore, foreground, sharedPaths).
   FIXTURE_ADAPTER="$MULTICLI_SCRATCH/tools/agy-cli"
   mkdir -p "$FIXTURE_ADAPTER"
-  cp "$MULTICLI_REPO_ROOT/agy-cli/adapter.json" "$FIXTURE_ADAPTER/adapter.json"
+  cp "$MULTICLI_REPO_ROOT/ai-tools/agy-cli/adapter.json" "$FIXTURE_ADAPTER/adapter.json"
   FIXTURE_PROFILE_DIR="$MULTICLI_HOME/agy-cli/work"
   mkdir -p "$FIXTURE_PROFILE_DIR"
   jq -n --arg id "$FIXTURE_PROFILE_ID" \

@@ -1,0 +1,48 @@
+name: Usage question
+description: Ask for help using Multi-CLI
+title: "[Question]: "
+labels:
+  - "type: question"
+  - "status: needs triage"
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Include sanitized commands and output. Never post credentials.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      placeholder: Multi-CLI 1.0.0, Windows 11, PowerShell 7.5
+    validations:
+      required: true
+  - type: input
+    id: ai_tool
+    attributes:
+      label: AI tool
+      description: Leave blank if the question is not specific to one supported tool.
+      placeholder: Codex CLI
+  - type: textarea
+    id: output
+    attributes:
+      label: Sanitized output
+      description: Include relevant command output after removing credentials and private data.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials and private account data.
+          required: true
+        - label: I checked the README and existing issues.
+          required: true

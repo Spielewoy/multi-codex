@@ -9,10 +9,10 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="0.1.0"
+VERSION="1.0.0"
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-TOOLS_DIR="${MULTICLI_TOOLS_DIR:-$SCRIPT_DIR}"
+TOOLS_DIR="${MULTICLI_TOOLS_DIR:-$SCRIPT_DIR/ai-tools}"
 BASE="${MULTICLI_HOME:-$HOME/MultiCliProfiles}"
 
 # shellcheck source=lib/adapter-validation.sh
@@ -97,6 +97,7 @@ resolve_path_token() {
 # every command that touches adapter data goes through this first.
 assert_adapter_valid() {
   local tool_id="$1" manifest
+  validate_tool_id "$tool_id"
   manifest="$(adapter_path "$tool_id")"
   [ -f "$manifest" ] || abort "Unknown tool '$tool_id'. Run: multi-cli tools"
   if ! validate_adapter_manifest "$manifest" "$tool_id"; then
@@ -110,6 +111,26 @@ assert_adapter_valid() {
 
 # Print the first binary candidate that exists (path or PATH lookup) for the
 # current platform; returns 1 when none resolve. MULTICLI_OVERRIDE_BINARY wins.
+find_windows_appx_binary() {
+  local candidate="$1"
+  [ "$(platform)" = windows ] || return 1
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  MULTICLI_WINDOWS_BINARY_CANDIDATE="$candidate" powershell.exe -NoProfile -NonInteractive -Command '
+    $candidate = $env:MULTICLI_WINDOWS_BINARY_CANDIDATE
+    if ($candidate -notlike "appx:*") { exit 1 }
+    $parts = $candidate.Substring(5).Split("!", 2)
+    if ($parts.Count -ne 2) { exit 1 }
+    $package = Get-AppxPackage -Name $parts[0] -PackageTypeFilter Main -ErrorAction SilentlyContinue |
+      Where-Object { $_.SignatureKind -eq "Store" } |
+      Sort-Object Version -Descending | Select-Object -First 1
+    if ($null -eq $package) { exit 1 }
+    $application = @((Get-AppxPackageManifest -Package $package).Package.Applications.Application) |
+      Where-Object { $_.Id -eq $parts[1] } | Select-Object -First 1
+    if ($null -eq $application) { exit 1 }
+    Write-Output ("appx:{0}!{1}" -f $package.PackageFamilyName, $parts[1])
+  ' 2>/dev/null | tr -d '\r'
+}
+
 find_adapter_binary() {
   local tool_id="$1"
   [ -n "${MULTICLI_OVERRIDE_BINARY:-}" ] && { printf '%s\n' "$MULTICLI_OVERRIDE_BINARY"; return 0; }
@@ -122,6 +143,18 @@ find_adapter_binary() {
 
   while IFS= read -r c; do
     [ -z "$c" ] && continue
+    case "$c" in
+      appx:*)
+        [ "$(json_str '.isolation.strategy' "$apath")" = accountOverlay ] || continue
+        [ "$(json_str '.account.mechanism' "$apath")" = osUserCredentialStore ] || continue
+        resolved="$(find_windows_appx_binary "$c")" && [ -n "$resolved" ] && {
+          printf '%s\n' "$resolved"
+          return 0
+        }
+        continue
+        ;;
+      uri:*) continue ;;
+    esac
     resolved="$(resolve_path_token "$c")"
     [ -x "$resolved" ] && { printf '%s\n' "$resolved"; return 0; }
     command -v "$resolved" >/dev/null 2>&1 && { command -v "$resolved"; return 0; }
@@ -134,14 +167,23 @@ find_adapter_binary() {
 # Profile addressing
 # =============================================================================
 
-# Parse <tool>/<name> into the TOOL and NAME globals; aborts on any other
-# shape. Name validation is a separate step (validate_name).
+# Parse and validate <tool>/<name> into the TOOL and NAME globals.
 split_profile_spec() {
   local spec="$1"
   [ -z "$spec" ] && abort "Profile required: <tool>/<name>"
   [[ "$spec" == */* ]] || abort "Profile must be in form <tool>/<name>. Got: '$spec'"
   TOOL="${spec%%/*}"
   NAME="${spec#*/}"
+  validate_tool_id "$TOOL"
+  validate_name "$NAME"
+}
+
+# Adapter ids are single safe path components. Validate them before any
+# adapter or profile path is joined.
+validate_tool_id() {
+  local tool_id="$1"
+  [ -z "$tool_id" ] && abort "Tool id required"
+  [[ "$tool_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*$ ]] || abort "Tool id '$tool_id' invalid: must start with alphanumeric, contain only letters/numbers/hyphens"
 }
 
 # Abort unless $1 is a safe profile/template name: alnum start, then
@@ -152,10 +194,61 @@ validate_name() {
   [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*$ ]] || abort "Profile name '$name' invalid: must start with alphanumeric, contain only letters/numbers/hyphens"
 }
 
-profile_dir()       { printf '%s/%s/%s\n' "$BASE" "$1" "$2"; }
-tool_profiles_dir() { printf '%s/%s\n' "$BASE" "$1"; }
-alias_dir()         { printf '%s/bin\n' "$BASE"; }
-templates_dir()     { printf '%s/.templates\n' "$BASE"; }
+# Canonicalize a path even when its final components do not exist by resolving
+# the nearest existing ancestor and appending only the missing names.
+storage_canonical() {
+  local path="$1" probe="$1" suffix="" parent canonical
+  while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do
+    suffix="/$(basename "$probe")$suffix"
+    parent="$(dirname "$probe")"
+    [ "$parent" != "$probe" ] || return 1
+    probe="$parent"
+  done
+  canonical="$(transfer_canonical "$probe")" || return 1
+  printf '%s%s\n' "${canonical%/}" "$suffix"
+}
+
+# Resolve a storage path only while each existing component stays physically
+# under MULTICLI_HOME. This rejects symlink/junction escapes while allowing a
+# caller-selected MULTICLI_HOME itself to be a link.
+storage_path() {
+  local label="$1"; shift
+  local canonical_base current segment canonical_current
+  canonical_base="$(storage_canonical "$BASE")" || abort "Cannot resolve MULTICLI_HOME '$BASE'."
+  current="$BASE"
+  for segment in "$@"; do
+    [ -n "$segment" ] || continue
+    current="$current/$segment"
+    if [ -e "$current" ] || [ -L "$current" ]; then
+      canonical_current="$(transfer_canonical "$current")" || abort "Cannot resolve $label '$current'."
+      transfer_path_within "$canonical_current" "$canonical_base" || \
+        abort "Refusing to access $label because '$current' resolves outside MULTICLI_HOME."
+    fi
+  done
+  printf '%s\n' "$current"
+}
+
+profile_dir() {
+  validate_tool_id "$1"
+  validate_name "$2"
+  storage_path "profile '$1/$2'" "$1" "$2"
+}
+tool_profiles_dir() {
+  validate_tool_id "$1"
+  storage_path "profile root for '$1'" "$1"
+}
+alias_dir()     { storage_path "alias directory" bin; }
+templates_dir() { storage_path "template root" .templates; }
+
+legacy_transfer_blocked() {
+  local action="$1" spec="$2"
+  abort "Cannot $action '$spec': legacy profile transfer is disabled because whole-root copies can leak tokens. Migrate the legacy profile first: multi-cli migrate $spec"
+}
+
+legacy_template_apply_blocked() {
+  local spec="$1" tpl_name="$2"
+  abort "Cannot create '$spec' from template '$tpl_name': legacy template application is disabled because old on-disk templates can contain credentials. Recreate the template from a migrated schema-v2 profile."
+}
 
 # =============================================================================
 # Session continuation -- copy conversation state between endpoints
@@ -395,6 +488,89 @@ copy_isolated_session_paths() {
   done < <(json_arr '.normalState.sessionPaths' "$apath")
 }
 
+path_is_reparse_point() {
+  local path="$1" ps_path
+  [ -L "$path" ] && return 0
+  [ -e "$path" ] || return 1
+  [ "$(platform)" = windows ] || return 1
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  ps_path="$path"
+  if command -v cygpath >/dev/null 2>&1; then
+    ps_path="$(cygpath -w "$path" 2>/dev/null || printf '%s' "$path")"
+  fi
+  MULTICLI_REPARSE_PATH="$ps_path" powershell.exe -NoProfile -Command '
+    $path = $env:MULTICLI_REPARSE_PATH
+    if (-not (Test-Path -LiteralPath $path)) { exit 1 }
+    $item = Get-Item -LiteralPath $path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 0 }
+    exit 1
+  ' >/dev/null 2>&1
+}
+
+isolated_clone_fail() {
+  ISOLATED_CLONE_ERROR="$1"
+  return 1
+}
+
+copy_isolated_clone_entry() {
+  local src="$1" dst="$2" src_root="$3" rel="$4"
+  local canonical entry name
+  if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+    return 0
+  fi
+  if path_is_reparse_point "$src"; then
+    isolated_clone_fail "Cannot clone isolated profile: '$rel' is a reparse point inside allowlisted state. Remove the link and retry."
+    return 1
+  fi
+  canonical="$(transfer_canonical "$src" 2>/dev/null || true)"
+  if [ -z "$canonical" ]; then
+    isolated_clone_fail "Cannot clone isolated profile: '$rel' cannot be resolved."
+    return 1
+  fi
+  if ! transfer_path_within "$canonical" "$src_root"; then
+    isolated_clone_fail "Cannot clone isolated profile: '$rel' resolves outside the isolated profile state root. Remove the link and retry."
+    return 1
+  fi
+  if [ -f "$src" ]; then
+    if [ "$(file_nlink "$src")" -gt 1 ]; then
+      isolated_clone_fail "Cannot clone isolated profile: '$rel' is a hardlink inside allowlisted state. Remove the link and retry."
+      return 1
+    fi
+    mkdir -p "$(dirname "$dst")"
+    cp -p "$src" "$dst" || {
+      isolated_clone_fail "Cannot clone isolated profile: copy failed for '$rel'."
+      return 1
+    }
+    return 0
+  fi
+  if [ ! -d "$src" ]; then
+    return 0
+  fi
+  mkdir -p "$dst"
+  while IFS= read -r -d '' entry; do
+    name="$(basename "$entry")"
+    copy_isolated_clone_entry "$entry" "$dst/$name" "$src_root" "$rel/$name" || return 1
+  done < <(find "$src" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+}
+
+copy_isolated_clone_paths() {
+  local tool="$1" src_dir="$2" dst_dir="$3"
+  local apath rel state_subdir src_state dst_state src_root
+  apath="$(adapter_path "$tool")"
+  state_subdir="$(json_str '.normalState.runtimeSubdir' "$apath")"
+  src_state="$src_dir"; dst_state="$dst_dir"
+  [ -n "$state_subdir" ] && src_state="$src_dir/$state_subdir" && dst_state="$dst_dir/$state_subdir"
+  src_root="$(storage_canonical "$src_state" 2>/dev/null || true)"
+  [ -n "$src_root" ] || isolated_clone_fail "Cannot clone isolated profile: source state root '$src_state' cannot be resolved."
+  [ -n "$src_root" ] || return 1
+  while IFS= read -r rel; do
+    [ -z "$rel" ] && continue
+    if [ -e "$src_state/$rel" ] || [ -L "$src_state/$rel" ]; then
+      copy_isolated_clone_entry "$src_state/$rel" "$dst_state/$rel" "$src_root" "$rel" || return 1
+    fi
+  done < <({ runtime_json_arr '.normalState.sharedPaths' "$apath"; runtime_json_arr '.normalState.sessionPaths' "$apath"; } | sort -u)
+}
+
 # multi-cli continue <tool> <src> <dest>: copy adapter-declared session state
 # between endpoints ('base' = the tool's real home). Merge policy keeps the
 # newer file; credential paths never travel. Schema-v2 tools already share
@@ -569,19 +745,26 @@ cmd_new() {
 
   split_profile_spec "$spec"
   validate_name "$NAME"
-  local apath pdir strategy
+  local apath pdir strategy mechanism
   apath="$(adapter_path "$TOOL")"
   assert_adapter_valid "$TOOL"
   pdir="$(profile_dir "$TOOL" "$NAME")"
   strategy="$(json_str '.isolation.strategy' "$apath")"
+  mechanism="$(json_str '.account.mechanism' "$apath")"
 
   [ "$shared" = true ] && [ "$isolated" = true ] && \
     abort "--shared and --isolated are mutually exclusive: choose one profile mode."
   if [ "$isolated" = true ] && [ "$strategy" != "accountOverlay" ]; then
     abort "--isolated applies to schema-v2 (accountOverlay) adapters; '$TOOL' uses '$strategy', which already isolates the whole root per profile."
   fi
+  if [ "$isolated" = true ] && [ "$mechanism" = "osUserCredentialStore" ]; then
+    abort "Adapter '$TOOL' cannot use --isolated because folder redirection does not isolate the OS credential store."
+  fi
 
   [ -d "$pdir" ] && abort "Profile '$spec' already exists"
+  if [ -n "$from_template" ] && [ "$strategy" != "accountOverlay" ]; then
+    legacy_template_apply_blocked "$spec" "$from_template"
+  fi
   mkdir -p "$(tool_profiles_dir "$TOOL")"
 
   if [ -n "$from_template" ]; then
@@ -593,8 +776,6 @@ cmd_new() {
       transfer_assert_template_compatible "$tdir" "$apath"
       mkdir -p "$pdir"
       transfer_apply_template "$tdir" "$apath" "$pdir" "$isolated"
-    else
-      cp -R "$tdir" "$pdir"
     fi
   elif [ "$shared" = true ] && [ "$strategy" != "accountOverlay" ]; then
     create_shared_profile "$TOOL" "$pdir"
@@ -742,24 +923,18 @@ cmd_clone() {
     mode="$(json_str '.mode' "$sdir/.profile.json")"
     mkdir -p "$ddir"
     if [ "$mode" = isolated ]; then
-      local state_subdir src_state dst_state
-      state_subdir="$(json_str '.normalState.runtimeSubdir' "$apath")"
-      src_state="$sdir"; dst_state="$ddir"
-      [ -n "$state_subdir" ] && src_state="$sdir/$state_subdir" && dst_state="$ddir/$state_subdir"
-      while IFS= read -r rel; do
-        [ -z "$rel" ] && continue
-        if [ -e "$src_state/$rel" ]; then
-          mkdir -p "$dst_state/$(dirname "$rel")"
-          cp -R "$src_state/$rel" "$dst_state/$rel"
-        fi
-      done < <({ runtime_json_arr '.normalState.sharedPaths' "$apath"; runtime_json_arr '.normalState.sessionPaths' "$apath"; } | sort -u)
+      ISOLATED_CLONE_ERROR=""
+      if ! copy_isolated_clone_paths "$st" "$sdir" "$ddir"; then
+        rm -rf "$ddir"
+        abort "${ISOLATED_CLONE_ERROR:-Cannot clone isolated profile safely.}"
+      fi
       : > "$ddir/.isolated"
       write_isolated_profile_metadata "$apath" "$ddir"
     else
       runtime_initialize_profile "$apath" "$ddir"
     fi
   else
-    cp -R "$sdir" "$ddir"
+    legacy_transfer_blocked "clone" "$src"
   fi
   create_shell_alias "$dt" "$dn"; create_shortcut "$dt" "$dn"
   echo "Cloned '$src' to '$dest'"
@@ -987,6 +1162,9 @@ cmd_launch() {
   # Isolated profiles share nothing: the profile dir is the tool's whole root,
   # so the account-overlay runtime (shared links, overlay) is bypassed.
   if [ "$strategy" = "accountOverlay" ] && [ -f "$pdir/.isolated" ]; then
+    if [ "$(json_str '.account.mechanism' "$apath")" = osUserCredentialStore ]; then
+      abort "Profile '$spec' cannot use --isolated because folder redirection does not isolate the OS credential store."
+    fi
     echo "Launching $display profile '$spec' [$strategy, isolated]"
     launch_isolated "$TOOL" "$pdir" "$binary" "${binary_args[@]+"${binary_args[@]}"}"
     return
@@ -1239,13 +1417,13 @@ launch_sandbox_user() {
   case "$(platform)" in
     macos)
       if ! dscl . -read /Users/"$username" &>/dev/null; then
-        echo "First launch — creating sandbox user (requires sudo)..."
+        echo "First launch: creating sandbox user (requires sudo)..."
         create_sandbox_user "$profile_name" "$pdir"
       fi
       ;;
     linux)
       if ! id "$username" &>/dev/null; then
-        echo "First launch — creating sandbox user (requires sudo)..."
+        echo "First launch: creating sandbox user (requires sudo)..."
         create_sandbox_user "$profile_name" "$pdir"
       fi
       ;;
@@ -1524,15 +1702,7 @@ cmd_template() {
         transfer_save_template "$(adapter_path "$TOOL")" "$sdir" "$(templates_dir)" "$tpl_name"
         return 0
       fi
-      local tdir="$(templates_dir)"
-      mkdir -p "$tdir"
-      local dest="$tdir/$tpl_name"
-      [ -d "$dest" ] && abort "Template '$tpl_name' already exists"
-      cp -R "$sdir" "$dest"
-      for f in .shared .cli .isolated auth.json .credentials.json oauth_creds.json; do
-        [ -e "$dest/$f" ] && rm -rf "$dest/$f"
-      done
-      echo "Saved template '$tpl_name' from '$spec'"
+      legacy_transfer_blocked "save a template from" "$spec"
       ;;
     list)
       local tdir="$(templates_dir)"
@@ -1570,8 +1740,7 @@ cmd_export() {
     transfer_export_profile "$(adapter_path "$TOOL")" "$sdir" "$out" "$NAME"
     return 0
   fi
-  tar -czf "$out" -C "$(dirname "$sdir")" "$(basename "$sdir")"
-  echo "Exported '$spec' to $out"
+  legacy_transfer_blocked "export" "$spec"
 }
 
 cmd_import() {
@@ -1584,12 +1753,11 @@ cmd_import() {
   [ -f "$(adapter_path "$TOOL")" ] || abort "Unknown tool '$TOOL'"
   local ddir="$(profile_dir "$TOOL" "$NAME")"
   [ -d "$ddir" ] && abort "Profile '$spec' already exists"
-  mkdir -p "$(tool_profiles_dir "$TOOL")"
   if [ "$(json_str '.schemaVersion' "$(adapter_path "$TOOL")")" = 2 ]; then
+    mkdir -p "$(tool_profiles_dir "$TOOL")"
     transfer_import_profile "$archive" "$(adapter_path "$TOOL")" "$ddir"
   else
-    mkdir -p "$ddir"
-    tar -xzf "$archive" -C "$ddir" --strip-components=1
+    legacy_transfer_blocked "import into" "$spec"
   fi
   create_shell_alias "$TOOL" "$NAME"
   create_shortcut "$TOOL" "$NAME"
@@ -1655,7 +1823,7 @@ _multi_cli_completions() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local base="${MULTICLI_HOME:-$HOME/MultiCliProfiles}"
   local script_dir="$(cd "$(dirname "$(command -v multi-cli 2>/dev/null || echo .)")" && pwd)"
-  local tools_dir="$script_dir"
+  local tools_dir="${MULTICLI_TOOLS_DIR:-$script_dir/ai-tools}"
   local cmds="new launch list status rename delete clone migrate continue auth template export import tools doctor stats completion help version"
   local tools="" specs=""
   if [ -d "$tools_dir" ]; then
@@ -1682,7 +1850,7 @@ _multi_cli() {
   cmds=(new launch list status rename delete clone migrate continue auth template export import tools doctor stats completion help version)
   local base="${MULTICLI_HOME:-$HOME/MultiCliProfiles}"
   local script_dir="$(cd "$(dirname "$(command -v multi-cli 2>/dev/null || echo .)")" && pwd)"
-  local tools_dir="$script_dir"
+  local tools_dir="${MULTICLI_TOOLS_DIR:-$script_dir/ai-tools}"
   if [ -d "$tools_dir" ]; then
     for d in "$tools_dir"/*/; do [ -f "$d/adapter.json" ] && tools+=($(basename "$d")); done
   fi

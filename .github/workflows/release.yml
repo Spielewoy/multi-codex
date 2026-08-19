@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify annotated tag belongs to the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          test "$(git cat-file -t "$GITHUB_REF")" = tag
+          git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$DEFAULT_BRANCH"
+
+      - name: Verify tag and embedded versions
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          test "$GITHUB_REF_NAME" = "v$version"
+          grep -Fx "## Multi-CLI $version" release/NOTES.md
+          bash release/build.sh --check --version "$version"
+          pwsh -NoProfile -File release/build.ps1 -Check -ExpectedVersion "$version"
+
+      - name: Validate AI tool definitions
+        shell: bash
+        run: |
+          bash scripts/validate-adapters.sh
+          pwsh -NoProfile -File scripts/Validate-Adapters.ps1
+
+      - name: Build archives
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          bash release/build.sh --output dist --version "$version"
+          pwsh -NoProfile -File release/build.ps1 -OutputDirectory dist -ExpectedVersion "$version"
+          (cd dist && sha256sum -- *.tar.gz *.zip > SHA256SUMS)
+
+      - name: Inspect archives
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          tar -tzf "dist/multi-cli-v$version-linux-macos.tar.gz" | grep -Fx "multi-cli-v$version/multi-cli"
+          tar -tzf "dist/multi-cli-v$version-linux-macos.tar.gz" | grep -Fx "multi-cli-v$version/assets/banner.svg"
+          unzip -Z1 "dist/multi-cli-v$version-windows.zip" | tr '\134' '/' | grep -Fx "multi-cli-v$version/multi-cli.ps1"
+          unzip -Z1 "dist/multi-cli-v$version-windows.zip" | tr '\134' '/' | grep -Fx "multi-cli-v$version/assets/banner.svg"
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out release notes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Record build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < release/VERSION)"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "Multi-CLI v$version" \
+            --notes-file release/NOTES.md

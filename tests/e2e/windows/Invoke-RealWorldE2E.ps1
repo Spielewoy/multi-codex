@@ -232,7 +232,7 @@ function Invoke-MultiCli {
 
 function Get-ToolAdapter {
     param([string]$ToolId)
-    $manifestPath = Join-Path (Join-Path $script:RepoRoot $ToolId) 'adapter.json'
+    $manifestPath = Join-Path (Join-Path (Join-Path $script:RepoRoot 'ai-tools') $ToolId) 'adapter.json'
     if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Adapter manifest not found for '$ToolId'." }
     return Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 }

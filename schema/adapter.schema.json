@@ -185,6 +185,9 @@
           },
           "additionalProperties": false
         },
+        "runtimeSubdir": {
+          "$ref": "#/$defs/relativePath"
+        },
         "sharedPaths": {
           "type": "array",
           "items": {

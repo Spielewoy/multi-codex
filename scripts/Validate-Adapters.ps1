@@ -1,5 +1,5 @@
 param(
-    [string]$ToolsRoot = (Split-Path -Parent $PSScriptRoot)
+    [string]$ToolsRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) 'ai-tools')
 )
 
 $ErrorActionPreference = 'Stop'

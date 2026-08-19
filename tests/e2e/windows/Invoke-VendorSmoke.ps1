@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
-$adapterPath = Join-Path (Join-Path $repoRoot $Tool) 'adapter.json'
+$adapterPath = Join-Path (Join-Path (Join-Path $repoRoot 'ai-tools') $Tool) 'adapter.json'
 if (-not (Test-Path -LiteralPath $adapterPath)) { throw "Unknown adapter '$Tool'." }
 $adapter = Get-Content -LiteralPath $adapterPath -Raw | ConvertFrom-Json
 $support = $adapter.support.windows

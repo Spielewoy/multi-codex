@@ -5,17 +5,16 @@
 #   tests/run-bats.sh foo.bats   # run a specific file
 #
 # Self-contained: works on a fresh machine with neither bats nor jq on PATH.
-#   - bats: uses a preinstalled `bats` if present; otherwise uses the vendored
-#     bats-core (tests/vendor/bats-core, pinned v1.11.0), cloning it on demand.
-#   - jq:   uses a jq already on PATH; otherwise the vendored static binary
-#     (tests/vendor/jq[.exe]), downloading it on demand.
-# The vendored copies live under tests/vendor/ (git-ignored). Whatever is
-# already on disk is reused as-is; nothing is re-fetched when present.
+#   - bats: uses a preinstalled `bats` if present; otherwise uses a cached
+#     bats-core (pinned v1.11.0), cloning it on demand.
+#   - jq:   uses a jq already on PATH; otherwise downloads a cached static binary.
+# The cache defaults to the system temporary directory and can be overridden
+# with MULTICLI_TEST_CACHE. Existing copies are reused.
 
 set -euo pipefail
 
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENDOR_DIR="$TESTS_DIR/vendor"
+VENDOR_DIR="${MULTICLI_TEST_CACHE:-${TMPDIR:-/tmp}/multi-cli-test-tools}"
 BATS_VERSION="v1.11.0"
 BATS_REPO="https://github.com/bats-core/bats-core"
 BATS_DIR="$VENDOR_DIR/bats-core"
@@ -25,8 +24,8 @@ VENDORED_BATS_BIN="$BATS_DIR/bin/bats"
 # shellcheck source=tests/helpers/common.bash
 source "$TESTS_DIR/helpers/common.bash"
 
-# Clone the pinned bats-core into tests/vendor when neither a preinstalled bats
-# nor the vendored copy is available.
+# Clone the pinned bats-core into the test-tool cache when neither a preinstalled
+# bats nor a cached copy is available.
 bootstrap_vendored_bats() {
   [ -x "$VENDORED_BATS_BIN" ] && return 0
   command -v git >/dev/null 2>&1 || {

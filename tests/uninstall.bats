@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Real-execution tests for scripts/uninstall.sh. install.sh writes a regular
+# Real-execution tests for install/uninstall.sh. install.sh writes a regular
 # launcher FILE (not a symlink) at MULTICLI_BIN_LINK; uninstall must remove
 # that file as well as legacy symlinks, and leave foreign files alone.
 
@@ -26,7 +26,7 @@ teardown() {
 
 # Run the uninstaller, declining the install-dir and profile-dir prompts.
 run_uninstall() {
-  printf 'n\nn\n' | bash "$MULTICLI_REPO_ROOT/scripts/uninstall.sh"
+  printf 'n\nn\n' | bash "$MULTICLI_REPO_ROOT/install/uninstall.sh"
 }
 
 @test "uninstall removes the regular-file launcher written by install.sh" {
@@ -74,10 +74,10 @@ JSON
   run bash -c 'source "$1"; mc_cred_set "$2" token' _ "$MULTICLI_REPO_ROOT/lib/credential-store.sh" "$target"
   [ "$status" -eq 0 ]
   MULTICLI_TEST_TARGETS+=("$target")
-  mkdir -p "$MULTICLI_INSTALL_DIR"
-  cp -R "$tools/secretcli" "$MULTICLI_INSTALL_DIR/"
+  mkdir -p "$MULTICLI_INSTALL_DIR/ai-tools"
+  cp -R "$tools/secretcli" "$MULTICLI_INSTALL_DIR/ai-tools/"
 
-  run bash -c "printf 'n\\ny\\n' | '$MULTICLI_REPO_ROOT/scripts/uninstall.sh'"
+  run bash -c "printf 'n\\ny\\n' | '$MULTICLI_REPO_ROOT/install/uninstall.sh'"
 
   [ "$status" -eq 0 ]
   [ ! -e "$MULTICLI_HOME" ]

@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a focused improvement to Multi-CLI
+title: "[Feature]: "
+labels:
+  - "type: feature"
+  - "status: needs triage"
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is difficult today, and who encounters it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Share any current workaround or alternative approach.
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criteria
+      description: What observable result would make this complete?
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Primary scope
+      options:
+        - Cross-platform
+        - Windows
+        - macOS
+        - Linux
+        - Documentation only
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Final check
+      options:
+        - label: I searched for an existing request.
+          required: true

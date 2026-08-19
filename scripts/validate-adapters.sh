@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # validate-adapters.sh -- semantically validate every adapter.json under the
-# repo root (or the directory given as $1). Exit 0 when all pass, 1 with one
+# ai-tools directory (or the directory given as $1). Exit 0 when all pass, 1 with one
 # error line per violation otherwise. Bash counterpart of
 # scripts/Validate-Adapters.ps1.
 set -euo pipefail
@@ -8,7 +8,7 @@ shopt -s nullglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TOOLS_ROOT="${1:-$REPO_ROOT}"
+TOOLS_ROOT="${1:-$REPO_ROOT/ai-tools}"
 
 command -v jq >/dev/null 2>&1 || {
   echo "Error: jq is required to validate adapters." >&2

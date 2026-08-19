@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/Spielewoy/multi-cli/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Support guide
+    url: https://github.com/Spielewoy/multi-cli/blob/main/docs/SUPPORT.md
+    about: Review support options and the details to include with a report.

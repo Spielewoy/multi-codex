@@ -1,0 +1,153 @@
+- name: "type: bug"
+  color: "d73a4a"
+  description: Something is broken or behaves incorrectly
+- name: "type: feature"
+  color: "0e8a16"
+  description: New behavior or capability
+- name: "type: ai tool"
+  color: "00a6a6"
+  description: New or changed AI tool support
+- name: "type: documentation"
+  color: "1d76db"
+  description: Documentation change
+- name: "type: question"
+  color: "d876e3"
+  description: Usage or support question
+- name: "type: security"
+  color: "b60205"
+  description: Security hardening without vulnerability details
+- name: "type: maintenance"
+  color: "cfd3d7"
+  description: Maintenance, cleanup, or dependency work
+- name: "status: needs triage"
+  color: "fbca04"
+  description: Needs an initial maintainer review
+- name: "status: blocked"
+  color: "bfd4f2"
+  description: Cannot proceed until a dependency is resolved
+- name: "status: confirmed"
+  color: "0e8a16"
+  description: Reproduced or accepted for implementation
+- name: "status: duplicate"
+  color: "cfd3d7"
+  description: Already tracked elsewhere
+- name: "status: not planned"
+  color: "ffffff"
+  description: Not planned for implementation
+- name: "status: awaiting response"
+  color: "d4c5f9"
+  description: More information is needed from the author
+- name: "good first issue"
+  color: "7057ff"
+  description: Suitable for a first contribution
+- name: "help wanted"
+  color: "008672"
+  description: Community help is welcome
+- name: "priority: p0"
+  color: "7a0000"
+  description: Release blocker or active security impact
+- name: "priority: p1"
+  color: "d93f0b"
+  description: High impact and should be handled next
+- name: "priority: p2"
+  color: "fbca04"
+  description: Normal priority
+- name: "priority: p3"
+  color: "c5def5"
+  description: Low urgency improvement
+- name: "area: cli"
+  color: "0052cc"
+  description: Main command line behavior
+- name: "area: installer"
+  color: "5319e7"
+  description: Install, update, or uninstall behavior
+- name: "area: ai tools"
+  color: "00a6a6"
+  description: AI tool definitions and integrations
+- name: "area: profiles"
+  color: "006b75"
+  description: Profile lifecycle and isolation
+- name: "area: sessions"
+  color: "0366d6"
+  description: Session continuation and transfer
+- name: "area: docs"
+  color: "1d76db"
+  description: Guides, examples, and translations
+- name: "area: ci"
+  color: "6f42c1"
+  description: Tests and GitHub Actions
+- name: "area: release"
+  color: "006b75"
+  description: Versioning and release assets
+- name: release
+  color: "006b75"
+  description: Included in an upcoming release
+- name: "platform: windows"
+  color: "0078d4"
+  description: Windows specific
+- name: "platform: macos"
+  color: "555555"
+  description: macOS specific
+- name: "platform: linux"
+  color: "f9d0c4"
+  description: Linux specific
+- name: "platform: cross-platform"
+  color: "bfdadc"
+  description: Applies to Windows, macOS, and Linux
+- name: "breaking change"
+  color: "b60205"
+  description: Requires a user migration or changes existing behavior
+- name: dependencies
+  color: "0366d6"
+  description: Dependency update
+- name: claude-cli
+  color: "d4c5f9"
+  description: Claude Code CLI
+- name: codex
+  color: "d4c5f9"
+  description: Codex CLI
+- name: codex-gui
+  color: "d4c5f9"
+  description: Codex desktop app
+- name: gemini-cli
+  color: "d4c5f9"
+  description: Gemini CLI
+- name: opencode
+  color: "d4c5f9"
+  description: OpenCode
+- name: commandcode
+  color: "d4c5f9"
+  description: Command Code
+- name: cursor
+  color: "d4c5f9"
+  description: Cursor desktop app
+- name: cursor-cli
+  color: "d4c5f9"
+  description: Cursor CLI
+- name: copilot-cli
+  color: "d4c5f9"
+  description: GitHub Copilot CLI
+- name: copilot-vscode
+  color: "d4c5f9"
+  description: GitHub Copilot in VS Code
+- name: kimi-cli
+  color: "d4c5f9"
+  description: Kimi Code CLI
+- name: grok-cli
+  color: "d4c5f9"
+  description: Grok Build CLI
+- name: antigravity
+  color: "d4c5f9"
+  description: Antigravity IDE
+- name: agy-cli
+  color: "d4c5f9"
+  description: Antigravity CLI
+- name: kiro
+  color: "d4c5f9"
+  description: Kiro
+- name: windsurf
+  color: "d4c5f9"
+  description: Windsurf
+- name: zed
+  color: "d4c5f9"
+  description: Zed

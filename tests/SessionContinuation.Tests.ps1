@@ -241,22 +241,20 @@ Describe 'multi-cli new (codex, profile seeding)' {
         } finally { Remove-Scratch $s }
     }
 
-    It '(16) --from <template> skips base seeding entirely' {
+    It '(16) --from <template> refuses an unmigrated legacy template before profile creation' {
         $s = New-Scratch
         try {
             New-CodexSystemHome -UserHome $s.Home | Out-Null
-            # Build a real template under MULTICLI_HOME/.templates/tpl
+            # A pre-schema template is an unclassified whole-root copy and may
+            # contain credentials under filenames the launcher cannot know.
             $tplDir = Join-Path (Join-Path $s.MultiCliHome '.templates') 'tpl'
             New-Item -ItemType Directory -Force -Path $tplDir | Out-Null
             Set-Content -Path (Join-Path $tplDir 'marker.txt') -Value 'from-template' -Encoding UTF8
 
             $r = Invoke-LauncherGuarded -Scratch $s -Arguments @('new', 'codex/fromtpl', '--from', 'tpl')
-            $r.ExitCode | Should Be 0
-            $r.StdOut | Should Not Match 'Seeded from base'
-
-            $files = Get-RelativeFileList -Root (& $script:CodexDest $s 'fromtpl')
-            $files -contains 'marker.txt' | Should Be $true
-            ($files -contains 'history.jsonl') | Should Be $false
+            $r.ExitCode | Should Be 1
+            $r.StdOut | Should Match 'legacy template application is disabled'
+            Test-Path -LiteralPath (& $script:CodexDest $s 'fromtpl') | Should Be $false
         } finally { Remove-Scratch $s }
     }
 }

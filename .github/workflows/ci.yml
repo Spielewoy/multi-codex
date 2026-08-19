@@ -9,23 +9,50 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # The important one: prove that a clean machine can install multi-cli from
-  # scratch and immediately run its core commands. This is the check that would
-  # have caught the install failure (missing jq / broken launcher).
+  github-config:
+    name: GitHub configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -version
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Lint GitHub Actions workflows
+        run: actionlint -config-file .github/actionlint.yaml -color
+
   install-smoke:
     name: install + run (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # Force the installer's own jq-resolution path: both runner images ship
-      # jq pre-installed, so we remove it first. The installer must put jq back
-      # (apt-get on Linux, brew on macOS) or the whole CLI is dead on arrival.
       - name: Remove pre-installed jq so the installer must provide it
         run: |
           if command -v apt-get >/dev/null 2>&1; then
@@ -41,14 +68,13 @@ jobs:
           fi
 
       - name: Install multi-cli from the working tree
-        run: bash scripts/install.sh --local
+        run: bash install/install.sh --local
 
       - name: jq is available after install
         run: |
           command -v jq
           jq --version
 
-      # The launcher lands in ~/.local/bin (see install.sh BIN_LINK default).
       - name: doctor / tools / new must all exit 0
         run: |
           export PATH="$HOME/.local/bin:$PATH"
@@ -56,47 +82,50 @@ jobs:
           multi-cli tools
           multi-cli new codex/ciprofile
 
-  # Shell correctness for every .sh and the main launcher. Run at error
-  # severity: the current tree has only style-level warnings (SC2155 "declare
-  # and assign separately" x24, SC2115 x1 in `multi-cli`) and zero errors, so
-  # error severity keeps CI green while still failing on real bugs (parse
-  # errors, undefined behavior, CRLF/SC1017, bad redirects, etc.).
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install shellcheck
-        run: sudo apt-get update -y && sudo apt-get install -y shellcheck
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version
+          else
+            sudo apt-get update -y
+            sudo apt-get install -y shellcheck
+            shellcheck --version
+          fi
 
       - name: Lint shell scripts
-        run: shellcheck --severity=error multi-cli scripts/install.sh scripts/uninstall.sh
+        run: shellcheck --severity=error multi-cli install/install.sh install/uninstall.sh release/build.sh
 
-  # PowerShell static analysis for the Windows scripts. Run at Error severity
-  # and exclude the rules that flag accepted design choices, not bugs:
-  # PSAvoidUsingConvertToSecureStringWithPlainText (Error-severity, fires on
-  # multi-cli.ps1's credential handling) and PSUseShouldProcessForStateChanging-
-  # Functions. Excluding these keeps CI green while still catching genuine
-  # parse/syntax failures and other error-severity rules.
   pwsh-lint:
     name: PSScriptAnalyzer
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: |
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope CurrentUser
 
       - name: Analyze PowerShell scripts
         shell: pwsh
         run: |
           $targets = @(
-            'scripts/install.ps1',
-            'scripts/uninstall.ps1',
+            'install/install.ps1',
+            'install/uninstall.ps1',
+            'release/build.ps1',
             'multi-cli.ps1'
           )
           $excludedRules = @(
@@ -112,28 +141,23 @@ jobs:
           }
           Write-Host "No error-severity findings."
 
-  # The bash session-continuation suite (bats). Runs the REAL launcher against
-  # real fixture trees on both Linux and macOS. bats-core and jq are fetched
-  # fresh by the runner (never committed): jq via the system package manager,
-  # bats-core via the system package manager when available, otherwise
-  # tests/run-bats.sh clones the pinned v1.11.0 into tests/vendor on demand.
   bats:
     name: bats (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install bats + jq
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get update -y
-            # libsecret-tools + gnome-keyring + dbus-x11: the auth/processSecret
-            # tests exercise the real Linux Secret Service backend (secret-tool),
-            # which needs both the CLI and a running keyring daemon.
             sudo apt-get install -y bats jq libsecret-tools gnome-keyring dbus-x11 acl
           elif command -v brew >/dev/null 2>&1; then
             brew install bats-core jq
@@ -144,13 +168,9 @@ jobs:
           bats --version
           jq --version
 
-      - name: Validate adapter contracts
+      - name: Validate AI tool definitions
         run: bash scripts/validate-adapters.sh
 
-      # macOS: `security` against the default login keychain can block on a GUI
-      # unlock/access prompt on a headless runner, hanging the whole suite.
-      # Give the run a dedicated ephemeral keychain with a known password,
-      # unlocked, partition-listed, and made default so no prompt can appear.
       - name: Prepare an ephemeral CI keychain (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -169,9 +189,7 @@ jobs:
       - name: Run the bats suite
         run: |
           if [ "$(uname -s)" = "Linux" ]; then
-            # Secret Service needs a session bus and an unlocked keyring.
-            # Smoke-check the store first so a broken keyring setup fails here
-            # with a clear error instead of obscure test failures.
+            # shellcheck disable=SC2016 # Expand command substitutions in the inner Bash process.
             dbus-run-session -- bash -c '
               set -euo pipefail
               printf "\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
@@ -183,11 +201,6 @@ jobs:
           else
             env MULTICLI_MACOS_KEYCHAIN="$HOME/Library/Keychains/$MULTICLI_CI_KEYCHAIN-db" bash tests/run-bats.sh
           fi
-
-      - name: Run the real POSIX OS-user lifecycle
-        if: runner.os == 'Windows'
-        timeout-minutes: 10
-        run: bash tests/e2e/posix-osuser.sh
 
       - name: Remove the ephemeral CI keychain (macOS)
         if: runner.os == 'macOS' && always()
@@ -202,10 +215,12 @@ jobs:
   bash-coverage:
     name: bash coverage (ubuntu-latest)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+          persist-credentials: false
       - name: Install coverage dependencies
         run: |
           BASHCOV_VERSION=3.3.0
@@ -225,24 +240,24 @@ jobs:
           bashcov --version
       - name: Enforce Bash coverage
         env:
-          COVERAGE_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          COVERAGE_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before || format('origin/{0}', github.event.repository.default_branch) }}
         run: |
+          # shellcheck disable=SC2016 # Expand COVERAGE_BASELINE in the inner Bash process.
           dbus-run-session -- bash -c '
             set -euo pipefail
             printf "\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
             exec env COVERAGE_BASELINE="$COVERAGE_BASELINE" bash tests/coverage/run-bash-coverage.sh
           '
 
-  # The PowerShell session-continuation suite (Pester). Uses the Pester 3.4
-  # shipped with Windows PowerShell 5.1 (the suite is 3.4-compatible). The
-  # PowerShell launcher parses JSON natively, so this suite needs no jq.
   pester:
     name: pester (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install Pester 3.4.0 (matches the 3.x-compatible suite)
         shell: powershell
@@ -251,7 +266,7 @@ jobs:
           Install-PackageProvider -Name NuGet -Force -Scope CurrentUser
           Install-Module -Name Pester -RequiredVersion 3.4.0 -Force -SkipPublisherCheck -Scope CurrentUser
 
-      - name: Validate adapter contracts
+      - name: Validate AI tool definitions
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Validate-Adapters.ps1
 
@@ -263,19 +278,36 @@ jobs:
       - name: Enforce PowerShell module coverage
         shell: powershell
         env:
-          COVERAGE_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          COVERAGE_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before || format('origin/{0}', github.event.repository.default_branch) }}
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/coverage/Invoke-ModuleCoverage.ps1 -MinimumPercent 95
 
   windows-install-smoke:
     name: install + run (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install from working tree
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -Local
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File install/install.ps1 -Local
       - name: Validate installed launcher
         shell: powershell
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File multi-cli.ps1 doctor
           powershell -NoProfile -ExecutionPolicy Bypass -File multi-cli.ps1 tools
+
+  release-metadata:
+    name: release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify embedded versions
+        run: |
+          bash release/build.sh --check
+          pwsh -NoProfile -File release/build.ps1 -Check
+          python3 scripts/validate-docs.py

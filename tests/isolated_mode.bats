@@ -289,7 +289,7 @@ track_secret_profile() {
 
 @test "Command Code clears its higher-precedence inherited API key" {
   mkdir -p "$TOOLS_ROOT/commandcode"
-  cp "$MULTICLI_REPO_ROOT/commandcode/adapter.json" "$TOOLS_ROOT/commandcode/adapter.json"
+  cp "$MULTICLI_REPO_ROOT/ai-tools/commandcode/adapter.json" "$TOOLS_ROOT/commandcode/adapter.json"
   run multicli new commandcode/iso --isolated --no-seed
   [ "$status" -eq 0 ]
   export COMMAND_CODE_API_KEY='wrong-account-secret'
@@ -359,32 +359,23 @@ PROBE
   [[ "$output" == *"multi-cli auth set secretcli/account-a"* ]]
 }
 
-# --- whole-home environment redirect -------------------------------------------
+# --- fixed OS credential identity ---------------------------------------------
 
-@test "whole-home isolated launch redirects environment paths into the profile (windows shape)" {
+@test "isolated mode is rejected for OS credential-store adapters before profile creation" {
   run multicli new lockedcli/iso --isolated --no-seed
-  [ "$status" -eq 0 ]
-  local pdir="$MULTICLI_HOME/lockedcli/iso"
-
-  run env MULTICLI_PLATFORM=windows "$MULTICLI_BIN" launch lockedcli/iso
-  [ "$status" -eq 0 ]
-  assert_same_path "$(jq -r '.home' "$CAPTURE_OUTPUT")" "$pdir/_home"
-  [ ! -e "$HOME/.lockedcli" ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"folder redirection does not isolate the OS credential store"* ]]
+  [ ! -e "$MULTICLI_HOME/lockedcli/iso" ]
 }
 
-@test "whole-home isolated launch does not bypass unsupported POSIX platforms" {
-  run multicli new lockedcli/iso --isolated --no-seed
+@test "a legacy isolated marker cannot bypass the OS credential-store boundary" {
+  run multicli new lockedcli/legacy --no-seed
   [ "$status" -eq 0 ]
-  local pdir="$MULTICLI_HOME/lockedcli/iso"
+  touch "$MULTICLI_HOME/lockedcli/legacy/.isolated"
 
-  run env MULTICLI_PLATFORM=linux "$MULTICLI_BIN" launch lockedcli/iso
+  run env MULTICLI_PLATFORM=windows "$MULTICLI_BIN" launch lockedcli/legacy
   [ "$status" -eq 1 ]
-  [[ "$output" == *"unsupported on linux"* ]]
-  [ ! -e "$CAPTURE_OUTPUT" ]
-
-  run env MULTICLI_PLATFORM=macos "$MULTICLI_BIN" launch lockedcli/iso
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"unsupported on macos"* ]]
+  [[ "$output" == *"folder redirection does not isolate the OS credential store"* ]]
   [ ! -e "$CAPTURE_OUTPUT" ]
 }
 

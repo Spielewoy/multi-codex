@@ -11,7 +11,7 @@
   (its child-process execution contributes no coverage by itself).
 
   Prints per-module and total command coverage, writes JSON and Cobertura
-  reports under tests/coverage/out, and enforces executable-line coverage for
+  reports under the system temporary directory by default, and enforces executable-line coverage for
   production lines added since -Baseline. It exits 1 when tests are unexecuted
   or fail, any module or changed-line result is below -MinimumPercent, or any
   command outside the documented host exceptions is missed.
@@ -21,7 +21,7 @@
   privilege-gated test that exercises them on capable hosts. They are exempt
   from the miss check and recorded in the JSON summary's documentedExceptions
   field. The gate fails when ANY other command is missed, and also when a listed
-  exception no longer matches a missed command (stale exception - remove it).
+  exception no longer exists in the analyzed commands (stale exception - remove it).
 
   USAGE
     powershell -NoProfile -ExecutionPolicy Bypass -File tests/coverage/Invoke-ModuleCoverage.ps1 [-MinimumPercent 95]
@@ -30,14 +30,29 @@
 param(
     [double]$MinimumPercent = 95,
     [string]$OutputPath,
-    [string]$Baseline = $(if ($env:COVERAGE_BASELINE) { $env:COVERAGE_BASELINE } else { 'HEAD^' })
+    [string]$Baseline = $env:COVERAGE_BASELINE
 )
 
 $ErrorActionPreference = 'Stop'
 $coverageRoot = $PSScriptRoot
 $testsRoot = Split-Path -Parent $coverageRoot
 $repoRoot = Split-Path -Parent $testsRoot
-if (-not $OutputPath) { $OutputPath = Join-Path $coverageRoot 'out\powershell-coverage.json' }
+if (-not $OutputPath) {
+    $OutputPath = Join-Path ([System.IO.Path]::GetTempPath()) 'multi-cli-coverage\powershell-coverage.json'
+}
+if (-not $Baseline) {
+    & git -C $repoRoot rev-parse --verify --quiet 'HEAD^^{commit}' 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $Baseline = 'HEAD^'
+    }
+    else {
+        & git -C $repoRoot rev-parse --verify --quiet 'origin/main^{commit}' 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Cannot resolve a coverage baseline. Set COVERAGE_BASELINE explicitly.'
+        }
+        $Baseline = 'origin/main'
+    }
+}
 
 # Same Pester pinning as tests/run-pester.ps1: the suite is 3.x syntax only.
 Get-Module Pester | Remove-Module -Force -ErrorAction SilentlyContinue
@@ -104,6 +119,11 @@ $script:DocumentedExceptions = @(
         file = 'MultiCli.OsUser.psm1'
         command = '$LASTEXITCODE -eq 0'
         reason = 'These native command helpers are exercised by the non-admin elevation test only when the runner is not elevated. Elevated CI covers every caller through deterministic shims; standard Windows hosts cover the real net.exe probe.'
+    },
+    [ordered]@{
+        file = 'MultiCli.Runtime.psm1'
+        command = '[System.IO.File]::Delete($reparsePoint.FullName)'
+        reason = 'Deleting a file reparse point can execute only when the host permits creation of file symlinks. The covering test exercises this command on Developer Mode, elevated, and other symlink-capable Windows hosts.'
     },
     [ordered]@{
         file = 'MultiCli.Runtime.psm1'
@@ -233,10 +253,15 @@ if ($totalMissed -gt 0) {
 
 # Partition missed commands into documented exceptions and unexpected misses.
 $missedCommands = @($coverage.MissedCommands)
+$analyzedCommands = @($coverage.HitCommands) + $missedCommands
 $exemptedCommands = @()
 $exceptionReports = @()
 foreach ($exception in $script:DocumentedExceptions) {
     $matches = @($missedCommands | Where-Object {
+        (Split-Path -Leaf $_.File) -eq $exception.file -and
+        (Get-NormalizedCommandText $_.Command) -eq (Get-NormalizedCommandText $exception.command)
+    })
+    $knownMatches = @($analyzedCommands | Where-Object {
         (Split-Path -Leaf $_.File) -eq $exception.file -and
         (Get-NormalizedCommandText $_.Command) -eq (Get-NormalizedCommandText $exception.command)
     })
@@ -245,16 +270,23 @@ foreach ($exception in $script:DocumentedExceptions) {
         command = $exception.command
         reason = $exception.reason
         active = ($matches.Count -gt 0)
+        exists = ($knownMatches.Count -gt 0)
     }
     if ($matches.Count -gt 0) { $exemptedCommands += $matches[0] }
 }
 $unexpectedMisses = @($missedCommands | Where-Object { $exemptedCommands -notcontains $_ })
-$staleExceptions = @($exceptionReports | Where-Object { -not $_.active })
+$staleExceptions = @($exceptionReports | Where-Object { -not $_.exists })
 
 Write-Host ""
 Write-Host "Documented exceptions: $($exceptionReports.Count) listed, $(@($exceptionReports | Where-Object { $_.active }).Count) active, $($staleExceptions.Count) stale"
 foreach ($report in $exceptionReports) {
-    $state = if ($report.active) { 'active (missed here, covered on privileged hosts)' } else { 'STALE (no longer missed; remove it)' }
+    $state = if ($report.active) {
+        'active (missed on this host)'
+    } elseif ($report.exists) {
+        'covered on this host'
+    } else {
+        'STALE (command no longer analyzed; remove it)'
+    }
     Write-Host "  $($report.file): $($report.command) - $state"
 }
 Write-Host "Unexpected missed commands: $($unexpectedMisses.Count)"
@@ -322,7 +354,7 @@ if ($unexpectedMisses.Count -gt 0) {
     exit 1
 }
 if ($staleExceptions.Count -gt 0) {
-    Write-Host "Coverage gate FAILED: $($staleExceptions.Count) documented exception(s) no longer match a missed command; remove them from `$script:DocumentedExceptions."
+    Write-Host "Coverage gate FAILED: $($staleExceptions.Count) documented exception(s) no longer match an analyzed command; remove them from `$script:DocumentedExceptions."
     exit 1
 }
 if ($totalPercent -lt $MinimumPercent) {

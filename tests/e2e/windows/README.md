@@ -41,7 +41,7 @@ log, and (via the harness) the sandbox.
 Per schema-v2 `accountOverlay` adapter, dispatched by the adapter's **real**
 `account.mechanism` (read from `adapter.json` at run time):
 
-### `fileOverlay` — claude-cli, codex, gemini-cli, commandcode
+### `fileOverlay`: claude-cli, codex, gemini-cli, commandcode
 
 1. Seed the tool's real shared normal-state root **under the test home**
    (a session/history file from `sessionPaths` + a config file from
@@ -63,7 +63,7 @@ Per schema-v2 `accountOverlay` adapter, dispatched by the adapter's **real**
    `.runtime\rogue-e2e.txt`, assert doctor flags it, remove it, assert doctor
    is clean again.
 
-### `processSecret` — cursor-cli, copilot-cli, kimi-cli, grok-cli
+### `processSecret`: cursor-cli, copilot-cli, kimi-cli, grok-cli
 
 1. Store per-profile dummy tokens (`dummy-token-account-a`,
    `dummy-token-account-b`) through the same real OS credential-store module
@@ -87,7 +87,7 @@ Per schema-v2 `accountOverlay` adapter, dispatched by the adapter's **real**
 ## Safety model
 
 * Sandbox root `%TEMP%\mcli_realworld` holds `home` (a dedicated test
-  USERPROFILE — the operator's real profile is **never** redirected or
+  USERPROFILE. The operator's real profile is **never** redirected or
   written), `profiles` (MULTICLI_HOME), `tmp`, `shims`, `captures`.
 * Every child process gets `USERPROFILE`/`HOME`/`APPDATA`/`LOCALAPPDATA`/
   `TEMP` redirected under the sandbox; a probe child proves it and the
@@ -110,7 +110,7 @@ Per schema-v2 `accountOverlay` adapter, dispatched by the adapter's **real**
   derived from sandbox profile metadata (covers crashed runs).
 * The sandbox is removed in `finally` (junction-safe deletion that never
   traverses a reparse point). `-KeepSandbox` keeps it for debugging.
-* Never opens browsers or logins, never sends prompts that consume quota —
+* Never opens browsers or logins and never sends prompts that consume quota.
   the only thing ever passed to a real binary is the adapter's
   `versionCommand`.
 
@@ -122,7 +122,7 @@ Per schema-v2 `accountOverlay` adapter, dispatched by the adapter's **real**
 details; safety assertions; harness notes. Before writing, all sandbox,
 `%TEMP%`, and user-profile paths are replaced by tokens and the JSON is
 secret-scanned (tokens, bearer strings, `sk-*`, even the dummy token values
-are excluded — token assertions compare in memory and record only the
+are excluded. Token assertions compare in memory and record only the
 boolean).
 
 ## Known real-world findings recorded by this harness

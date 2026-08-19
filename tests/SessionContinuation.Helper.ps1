@@ -8,7 +8,7 @@
   and MULTICLI_HOME redirected into a scratch sandbox. Also dot-sources the
   launcher's functions into the current session for unit-level branch tests.
 
-  Owned by the Pester side only. Bash/bats owns tests/vendor/bats-core.
+  Owned by the Pester side only. Bash/bats owns its temporary tool cache.
 #>
 
 Set-StrictMode -Version Latest
@@ -249,7 +249,7 @@ function New-BrokenAdapterToolsDir {
     #>
     param([pscustomobject]$Scratch)
     $toolsDir = Join-Path $Scratch.Root 'broken-tools'
-    $codexDir = Join-Path $toolsDir 'codex'
+    $codexDir = Join-Path $toolsDir 'ai-tools\codex'
     New-Item -ItemType Directory -Force -Path $codexDir | Out-Null
     $adapter = [ordered]@{
         id          = 'codex'
@@ -268,7 +268,7 @@ function New-BrokenAdapterToolsDir {
     }
     Set-Content -Path (Join-Path $codexDir 'adapter.json') -Value ($adapter | ConvertTo-Json -Depth 6) -Encoding UTF8
 
-    # Copy the launcher and runtime modules so its $ToolsDir = $ScriptDir picks up the broken adapter.
+    # Copy the launcher and runtime modules so its default ai-tools dir picks up the broken adapter.
     $launcherCopy = Join-Path $toolsDir 'multi-cli.ps1'
     Copy-Item -Path $script:LauncherPath -Destination $launcherCopy -Force
     $sourceLib = Join-Path (Split-Path -Parent $script:LauncherPath) 'lib'

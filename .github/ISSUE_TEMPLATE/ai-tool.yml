@@ -1,0 +1,75 @@
+name: AI tool request
+description: Request support for another AI coding CLI, IDE, or desktop app
+title: "[AI Tool]: "
+labels:
+  - "type: ai tool"
+  - "status: needs triage"
+body:
+  - type: input
+    id: product
+    attributes:
+      label: AI tool
+      description: Use the product's official name.
+      placeholder: Product name
+    validations:
+      required: true
+  - type: input
+    id: website
+    attributes:
+      label: Official website
+      description: Link to the vendor or project's official product page.
+      placeholder: https://example.com
+    validations:
+      required: true
+  - type: dropdown
+    id: product_type
+    attributes:
+      label: Product type
+      description: Select every interface that applies.
+      multiple: true
+      options:
+        - CLI
+        - IDE or editor extension
+        - Desktop app
+    validations:
+      required: true
+  - type: input
+    id: authentication_docs
+    attributes:
+      label: Authentication documentation
+      description: Link to the vendor's current sign-in or configuration documentation.
+      placeholder: https://example.com/docs/authentication
+    validations:
+      required: true
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Platforms
+      multiple: true
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: account_storage
+    attributes:
+      label: Known account storage
+      description: If known, explain where the tool stores credentials, sessions, and settings. Link to an official source when available.
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Explain why separate accounts need to run without switching sign-ins.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Final check
+      options:
+        - label: I searched existing requests for this product.
+          required: true
+        - label: I linked official sources and removed all credentials and private data.
+          required: true
